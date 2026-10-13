@@ -7,5 +7,8 @@ export function useFilters(favoritesOnly = false) {
   const country = useUiStore((s) => s.country);
   const rawSearch = useUiStore((s) => s.search);
   const search = useDebounced(rawSearch);
-  return useMemo(() => ({ sourceId, group, country, search, favoritesOnly }), [sourceId, group, country, search, favoritesOnly]);
+  return useMemo(
+    () => ({ sourceId, group, country, search, favoritesOnly }),
+    [sourceId, group, country, search, favoritesOnly],
+  );
 }

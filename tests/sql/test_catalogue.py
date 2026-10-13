@@ -10,8 +10,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 CORE = ROOT / "src-tauri/crates/iptv-core"
 RUST = (CORE / "src/db.rs").read_text()
-# The matching statements contain no escaped Rust string characters.
-MATCH_SQL = re.findall(r'c\.execute\("([\s\S]*?)",\[generation\]\)\?', RUST.split('fn match_epg(')[1])
+# The matching statements contain no escaped Rust string characters. Tolerate rustfmt layouts.
+MATCH_SQL = re.findall(
+    r'c\.execute\(\s*"([\s\S]*?)",\s*\[generation\],?\s*\)\?', RUST.split('fn match_epg(')[1]
+)
 CHANNEL_FILTER = re.search(r'const CHANNEL_FILTER: &str = "([\s\S]*?)";', RUST).group(1).replace("\\\\", "\\")
 
 class CatalogueTests(unittest.TestCase):

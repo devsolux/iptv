@@ -5,10 +5,15 @@ const regions = ['DE', 'TR', 'US', 'GB', 'FR', 'JP', 'BR'];
 const groups = ['News', 'Documentary', 'Entertainment', 'Sports', 'Music'];
 const count = 50_000;
 function channel(index: number): Channel {
-  return { id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
-    sourceId, name: `Channel ${String(index + 1).padStart(5, '0')}`,
-    country: regions[index % regions.length] ?? 'DE', favorite: index % 13 === 0,
-    variants: 1, hasEpg: index % 7 !== 0 };
+  return {
+    id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    sourceId,
+    name: `Channel ${String(index + 1).padStart(5, '0')}`,
+    country: regions[index % regions.length] ?? 'DE',
+    favorite: index % 13 === 0,
+    variants: 1,
+    hasEpg: index % 7 !== 0,
+  };
 }
 function channels(query: ChannelQuery) {
   const items: Channel[] = [];
@@ -33,20 +38,53 @@ function guide(query: GuideQuery) {
     const index = Number(id.slice(-12)) - 1;
     if (index % 7 === 0) continue;
     for (let time = start; time < query.end; time += 1800) {
-      items.push({ channelId: id, start: time, end: time + 1800,
-        title: ['World Report', 'On the Road', 'The Big Picture', 'Live Studio'][(Math.floor(time / 1800) + index) % 4] ?? 'Live Studio',
-        description: 'Synthetic programme information for development and remote-navigation testing.' });
+      items.push({
+        channelId: id,
+        start: time,
+        end: time + 1800,
+        title:
+          ['World Report', 'On the Road', 'The Big Picture', 'Live Studio'][
+            (Math.floor(time / 1800) + index) % 4
+          ] ?? 'Live Studio',
+        description:
+          'Synthetic programme information for development and remote-navigation testing.',
+      });
     }
   }
   return { items, revision: 1 };
 }
-export async function previewCommand(command: string, args: Record<string, unknown>): Promise<unknown> {
+export async function previewCommand(
+  command: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
   await new Promise((resolve) => setTimeout(resolve, 35));
   switch (command) {
-    case 'app_status': return { name: 'IPTV', version: '1.0.0', identifier: 'com.devsolux.iptv', unlocked: true, vaultExists: true, nativePlayer: false };
-    case 'list_sources': return [{ id: sourceId, name: 'Development catalogue', channels: count, updatedAt: Math.floor(Date.now() / 1000), hasEpg: true }];
-    case 'list_jobs': return [];
-    case 'query_countries': return regions.map((code, index) => ({ code, count: Math.floor((count + regions.length - index - 1) / regions.length) }));
+    case 'app_status':
+      return {
+        name: 'IPTV',
+        version: '1.0.0',
+        identifier: 'com.devsolux.iptv',
+        unlocked: true,
+        vaultExists: true,
+        nativePlayer: false,
+      };
+    case 'list_sources':
+      return [
+        {
+          id: sourceId,
+          name: 'Development catalogue',
+          channels: count,
+          updatedAt: Math.floor(Date.now() / 1000),
+          hasEpg: true,
+        },
+      ];
+    case 'list_jobs':
+      return [];
+    case 'query_countries':
+      return regions.map((code, index) => ({
+        code,
+        count: Math.floor((count + regions.length - index - 1) / regions.length),
+      }));
     case 'locate_channel': {
       const query = args.query as ChannelQuery;
       const fullIndex = Number(String(args.channelId).slice(-12)) - 1;
@@ -63,9 +101,17 @@ export async function previewCommand(command: string, args: Record<string, unkno
       }
       return { index: null, revision: 1 };
     }
-    case 'query_channels': return channels(args.query as ChannelQuery);
-    case 'query_groups': return groups;
-    case 'query_guide': return guide(args.query as GuideQuery);
-    default: throw { code: 'PREVIEW', message: 'This is a read-only preview. Start the Tauri application for imports, storage and playback.' };
+    case 'query_channels':
+      return channels(args.query as ChannelQuery);
+    case 'query_groups':
+      return groups;
+    case 'query_guide':
+      return guide(args.query as GuideQuery);
+    default:
+      throw {
+        code: 'PREVIEW',
+        message:
+          'This is a read-only preview. Start the Tauri application for imports, storage and playback.',
+      };
   }
 }
