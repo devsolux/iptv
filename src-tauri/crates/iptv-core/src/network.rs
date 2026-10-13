@@ -252,10 +252,10 @@ impl MediaNetwork {
         self.policy.check_url(url)?;
         let key = url.origin().ascii_serialization();
         let mut cache = self.clients.lock().await;
-        if let Some((created, client)) = cache.get(&key) {
-            if created.elapsed() < Duration::from_secs(60) {
-                return Ok(client.clone());
-            }
+        if let Some((created, client)) = cache.get(&key)
+            && created.elapsed() < Duration::from_secs(60)
+        {
+            return Ok(client.clone());
         }
         let addresses = self.policy.resolve(url).await?;
         let client = reqwest::Client::builder()

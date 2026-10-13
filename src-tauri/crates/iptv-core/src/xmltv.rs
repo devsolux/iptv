@@ -4,7 +4,7 @@ use crate::{
     models::{EpgChannel, EpgProgramme},
 };
 use chrono::{DateTime, NaiveDateTime};
-use quick_xml::{Reader, events::Event};
+use quick_xml::{Reader, XmlVersion, events::Event};
 use std::io::{self, BufRead, Read};
 
 pub enum Record {
@@ -47,7 +47,7 @@ pub fn parse<R: BufRead>(input: R, mut emit: impl FnMut(Record) -> Result<()>) -
     });
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::with_capacity(4096);
-    let mut stack: Vec<Vec<u8>> = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
     let mut channel: Option<EpgChannel> = None;
     let mut programme: Option<EpgProgramme> = None;
     let mut text = String::new();
@@ -61,13 +61,12 @@ pub fn parse<R: BufRead>(input: R, mut emit: impl FnMut(Record) -> Result<()>) -
             .map_err(|_| Error::Invalid("The XMLTV document is malformed or exceeds a limit."))?;
         match event {
             Event::Decl(decl) => {
-                if let Some(encoding) = decl.encoding() {
-                    if !encoding
+                if let Some(encoding) = decl.encoding()
+                    && !encoding
                         .map_err(|_| Error::Invalid("Invalid XML encoding."))?
-                        .eq_ignore_ascii_case(b"UTF-8")
-                    {
-                        return Err(Error::Invalid("XMLTV must use UTF-8."));
-                    }
+                        .eq_ignore_ascii_case("UTF-8")
+                {
+                    return Err(Error::Invalid("XMLTV must use UTF-8."));
                 }
             }
             Event::DocType(_) => {
@@ -76,10 +75,10 @@ pub fn parse<R: BufRead>(input: R, mut emit: impl FnMut(Record) -> Result<()>) -
                 ));
             }
             Event::Start(ref e) | Event::Empty(ref e) => {
-                let tag = e.local_name().as_ref().to_vec();
+                let tag = e.local_name().as_ref().to_owned();
                 let empty = matches!(event, Event::Empty(_));
                 if stack.is_empty() {
-                    if root_seen || tag != b"tv" {
+                    if root_seen || tag != "tv" {
                         return Err(Error::Invalid("XMLTV needs one tv root element."));
                     }
                     root_seen = true;
@@ -87,19 +86,19 @@ pub fn parse<R: BufRead>(input: R, mut emit: impl FnMut(Record) -> Result<()>) -
                 if stack.len() >= 32 {
                     return Err(Error::Limit);
                 }
-                if stack.len() == 1 && (tag == b"channel" || tag == b"programme") {
+                if stack.len() == 1 && (tag == "channel" || tag == "programme") {
                     let mut attrs = std::collections::BTreeMap::new();
                     for attr in e.attributes() {
                         let attr = attr.map_err(|_| Error::Invalid("Invalid XMLTV attributes."))?;
                         let value = attr
-                            .decode_and_unescape_value(reader.decoder())
+                            .normalized_value(XmlVersion::Implicit1_0)
                             .map_err(|_| Error::Invalid("Invalid XMLTV attribute text."))?
                             .into_owned();
-                        attrs.insert(attr.key.as_ref().to_vec(), value);
+                        attrs.insert(attr.key.as_ref().to_owned(), value);
                     }
-                    if tag == b"channel" {
+                    if tag == "channel" {
                         let id = attrs
-                            .remove(b"id".as_slice())
+                            .remove("id")
                             .ok_or(Error::Invalid("An EPG channel has no ID."))?;
                         if id.is_empty() || id.len() > 512 {
                             return Err(Error::Limit);
@@ -110,20 +109,19 @@ pub fn parse<R: BufRead>(input: R, mut emit: impl FnMut(Record) -> Result<()>) -
                         });
                     } else {
                         let channel_id = attrs
-                            .remove(b"channel".as_slice())
+                            .remove("channel")
                             .ok_or(Error::Invalid("A programme has no channel ID."))?;
                         if channel_id.is_empty() || channel_id.len() > 512 {
                             return Err(Error::Limit);
                         }
                         let start = timestamp(
                             attrs
-                                .get(b"start".as_slice())
+                                .get("start")
                                 .ok_or(Error::Invalid("A programme has no start time."))?,
                         )?;
-                        let end =
-                            timestamp(attrs.get(b"stop".as_slice()).ok_or(Error::Invalid(
-                                "A programme has no stop time; an explicit end is required.",
-                            ))?)?;
+                        let end = timestamp(attrs.get("stop").ok_or(Error::Invalid(
+                            "A programme has no stop time; an explicit end is required.",
+                        ))?)?;
                         if end <= start || end - start > 7 * 86400 {
                             return Err(Error::Invalid("Invalid programme interval."));
                         }
@@ -151,24 +149,11 @@ pub fn parse<R: BufRead>(input: R, mut emit: impl FnMut(Record) -> Result<()>) -
                     stack.push(tag);
                 }
             }
-            Event::Text(e) => {
-                let decoded = e
-                    .decode()
-                    .map_err(|_| Error::Invalid("XMLTV must use UTF-8."))?;
-                append(&mut text, &decoded)?;
-            }
-            Event::CData(e) => {
-                append(
-                    &mut text,
-                    &e.decode()
-                        .map_err(|_| Error::Invalid("Invalid XMLTV text."))?,
-                )?;
-            }
+            // The reader already rejected non-UTF-8 input; event content is `str`.
+            Event::Text(e) => append(&mut text, &e.xml10_content())?,
+            Event::CData(e) => append(&mut text, &e.xml10_content())?,
             Event::GeneralRef(e) => {
-                let reference = e
-                    .decode()
-                    .map_err(|_| Error::Invalid("Invalid XML entity."))?;
-                let escaped = format!("&{reference};");
+                let escaped = format!("&{};", &*e);
                 let decoded = quick_xml::escape::unescape(&escaped)
                     .map_err(|_| Error::Invalid("Unknown XML entities are not allowed."))?;
                 append(&mut text, &decoded)?;
@@ -209,7 +194,7 @@ fn append(text: &mut String, part: &str) -> Result<()> {
 }
 #[allow(clippy::too_many_arguments)]
 fn finish(
-    tag: &[u8],
+    tag: &str,
     depth: usize,
     text: &str,
     channel: &mut Option<EpgChannel>,
@@ -218,25 +203,26 @@ fn finish(
     programmes: &mut usize,
     channels: &mut usize,
 ) -> Result<()> {
-    if depth == 3 && tag == b"display-name" {
-        if let Some(c) = channel.as_mut() {
-            if c.names.len() < 16 && !text.trim().is_empty() {
-                c.names.push(text.trim().chars().take(512).collect());
-            }
+    if depth == 3 && tag == "display-name" {
+        if let Some(c) = channel.as_mut()
+            && c.names.len() < 16
+            && !text.trim().is_empty()
+        {
+            c.names.push(text.trim().chars().take(512).collect());
         }
-    } else if depth == 3 && tag == b"title" {
-        if let Some(p) = programme.as_mut() {
-            if p.title.is_empty() {
-                p.title = text.trim().chars().take(512).collect();
-            }
+    } else if depth == 3 && tag == "title" {
+        if let Some(p) = programme.as_mut()
+            && p.title.is_empty()
+        {
+            p.title = text.trim().chars().take(512).collect();
         }
-    } else if depth == 3 && tag == b"desc" {
-        if let Some(p) = programme.as_mut() {
-            if p.description.is_empty() {
-                p.description = text.trim().chars().take(8192).collect();
-            }
+    } else if depth == 3 && tag == "desc" {
+        if let Some(p) = programme.as_mut()
+            && p.description.is_empty()
+        {
+            p.description = text.trim().chars().take(8192).collect();
         }
-    } else if depth == 2 && tag == b"channel" {
+    } else if depth == 2 && tag == "channel" {
         if let Some(c) = channel.take() {
             *channels += 1;
             if *channels > 250_000 {
@@ -244,14 +230,15 @@ fn finish(
             }
             emit(Record::Channel(c))?;
         }
-    } else if depth == 2 && tag == b"programme" {
-        if let Some(p) = programme.take() {
-            *programmes += 1;
-            if *programmes > MAX_PROGRAMMES {
-                return Err(Error::Limit);
-            }
-            emit(Record::Programme(p))?;
+    } else if depth == 2
+        && tag == "programme"
+        && let Some(p) = programme.take()
+    {
+        *programmes += 1;
+        if *programmes > MAX_PROGRAMMES {
+            return Err(Error::Limit);
         }
+        emit(Record::Programme(p))?;
     }
     Ok(())
 }

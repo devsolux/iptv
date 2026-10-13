@@ -24,7 +24,7 @@ interface Selection {
 export default function GuidePage() {
   const filters = useFilters();
   const catalogue = useCatalogue(filters);
-  const viewport = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const [start, setStart] = useState(initialStart);
@@ -115,6 +115,7 @@ export default function GuidePage() {
     catalogue.pager.wantRange(clamped.index, clamped.index + 4);
     virtual.scrollToIndex(clamped.index, { align: 'auto' });
   };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loaded pages and scrolled rows may mount the button to focus.
   useLayoutEffect(() => {
     if (!pending.current || guideLoading) return;
     const channel = catalogue.pager.at(selection.index);
@@ -178,6 +179,8 @@ export default function GuidePage() {
         <div
           className="heading-actions"
           id="page-actions"
+          role="toolbar"
+          aria-label="Guide time window"
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') {
               event.preventDefault();
@@ -234,14 +237,15 @@ export default function GuidePage() {
       <div className="guide-axis">
         <div>CHANNEL</div>
         <div className="guide-times">
-          {Array.from({ length: 6 }, (_, index) => (
-            <span key={index}>{clock(start + index * 1800)}</span>
+          {Array.from({ length: 6 }, (_, index) => start + index * 1800).map((time) => (
+            <span key={time}>{clock(time)}</span>
           ))}
         </div>
       </div>
-      <div
+      <section
         ref={viewport}
         className="virtual-viewport guide-viewport"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must stay keyboard-focusable and is the focus fallback for virtualized rows.
         tabIndex={0}
         aria-label="TV guide"
         onKeyDown={(event) => {
@@ -358,7 +362,7 @@ export default function GuidePage() {
             );
           })}
         </div>
-      </div>
+      </section>
       <aside className="programme-detail" aria-live="polite">
         <strong>{activeProgramme?.title || activeChannel?.name || 'Explore your TV guide'}</strong>
         <p>

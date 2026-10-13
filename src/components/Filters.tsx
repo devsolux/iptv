@@ -14,6 +14,7 @@ export function Filters({ onEnterContent }: { onEnterContent: () => void }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [groups, setGroups] = useState<string[]>([]);
   const [error, setError] = useState('');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: epoch is a refresh trigger, not a value the effect reads.
   useEffect(() => {
     let active = true;
     void Promise.all([api.sources(), api.groups(sourceId)])
@@ -32,8 +33,9 @@ export function Filters({ onEnterContent }: { onEnterContent: () => void }) {
     };
   }, [sourceId, epoch]);
   return (
-    <div
+    <section
       className="filter-panel"
+      aria-label="Channel filters"
       onKeyDown={(event) => {
         if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
           event.preventDefault();
@@ -123,6 +125,6 @@ export function Filters({ onEnterContent }: { onEnterContent: () => void }) {
           {error}
         </p>
       )}
-    </div>
+    </section>
   );
 }

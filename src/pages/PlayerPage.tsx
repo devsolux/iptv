@@ -10,7 +10,7 @@ export default function PlayerPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const video = useRef<HTMLVideoElement>(null);
-  const surface = useRef<HTMLDivElement>(null);
+  const surface = useRef<HTMLElement>(null);
   useEffect(() => {
     surface.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, []);
@@ -36,9 +36,10 @@ export default function PlayerPage() {
   }
   return (
     <IonPage>
-      <div
+      <section
         ref={surface}
         className="player-page"
+        aria-label="Player"
         onKeyDown={(event) => {
           if (event.key === ' ' || event.key === 'MediaPlayPause') {
             event.preventDefault();
@@ -69,6 +70,7 @@ export default function PlayerPage() {
           )}
         </header>
         <div className="video-stage">
+          {/* biome-ignore lint/a11y/useMediaCaption: live captions arrive as stream text tracks exposed by the player. */}
           <video
             ref={video}
             playsInline
@@ -165,11 +167,13 @@ export default function PlayerPage() {
                     value={variant}
                     onChange={(event) => setVariant(Number(event.target.value))}
                   >
-                    {Array.from({ length: player.session.variants }, (_, index) => (
-                      <option key={index} value={index}>
-                        Variant {index + 1}
-                      </option>
-                    ))}
+                    {Array.from({ length: player.session.variants }, (_, index) => index).map(
+                      (option) => (
+                        <option key={option} value={option}>
+                          Variant {option + 1}
+                        </option>
+                      ),
+                    )}
                   </select>
                 </label>
               )}
@@ -210,7 +214,7 @@ export default function PlayerPage() {
             {fullscreenError && <ErrorNotice message={fullscreenError} />}
           </footer>
         )}
-      </div>
+      </section>
     </IonPage>
   );
 }

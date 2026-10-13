@@ -16,8 +16,10 @@ class ProjectTools(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='iptv-tools-')
         self.root = Path(self.temp.name) / 'project'
+        # Skip every generated output the tests recreate, so earlier local runs cannot collide.
         shutil.copytree(ROOT, self.root, ignore=shutil.ignore_patterns(
-            'node_modules', 'target', 'dist', 'gen', '__pycache__', '.git'))
+            'node_modules', 'target', 'dist', 'gen', '__pycache__', '.git',
+            'test-results', 'playwright-report'))
 
     def tearDown(self):
         self.temp.cleanup()

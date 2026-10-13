@@ -167,6 +167,7 @@ export default function App() {
   const status = useUiStore((s) => s.status);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger, not a value the effect reads.
   useEffect(() => {
     let active = true;
     void api

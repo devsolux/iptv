@@ -17,7 +17,7 @@ export default function CountriesPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
-  const viewport = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLElement>(null);
   const columns = useColumns(viewport, 220);
   const visible = useMemo(
     () =>
@@ -42,6 +42,7 @@ export default function CountriesPage() {
     request: () => undefined,
     updateToken: visible,
   });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: epoch is a refresh trigger, not a value the effect reads.
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -108,9 +109,10 @@ export default function CountriesPage() {
           </Link>
         </Empty>
       )}
-      <div
+      <section
         ref={viewport}
         className="virtual-viewport"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must stay keyboard-focusable and is the focus fallback for virtualized cards.
         tabIndex={0}
         aria-label="Countries"
         onKeyDown={(event) => {
@@ -159,7 +161,7 @@ export default function CountriesPage() {
             </div>
           ))}
         </div>
-      </div>
+      </section>
     </section>
   );
 }

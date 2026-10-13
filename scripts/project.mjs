@@ -189,7 +189,10 @@ make clean[-web|-rust|-android]
                             Remove known outputs only; retain sources, locks and user data
 
 Equivalent npm commands work without Make. Prerequisites and signing: docs/BUILDING.md.`;
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node realpaths the ESM entry but not argv[1]; compare real paths so a symlinked checkout
+// (for example macOS /var -> /private/var) runs the task instead of silently exiting 0.
+const invoked = process.argv[1] && existsSync(process.argv[1]) ? realpathSync(process.argv[1]) : '';
+if (invoked && invoked === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const task = process.argv[2] || 'help';
     if (task === 'help') console.log(help);

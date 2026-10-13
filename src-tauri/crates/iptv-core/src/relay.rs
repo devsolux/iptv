@@ -239,12 +239,12 @@ impl Relay {
         })
     }
     pub fn close(&self, id: Option<&str>) {
-        if let Ok(mut guard) = self.inner.current.lock() {
-            if id.is_none() || guard.as_ref().is_some_and(|s| Some(s.id.as_str()) == id) {
-                self.inner.epoch.fetch_add(1, Ordering::SeqCst);
-                if let Some(session) = guard.take() {
-                    session.cancel.send_replace(true);
-                }
+        if let Ok(mut guard) = self.inner.current.lock()
+            && (id.is_none() || guard.as_ref().is_some_and(|s| Some(s.id.as_str()) == id))
+        {
+            self.inner.epoch.fetch_add(1, Ordering::SeqCst);
+            if let Some(session) = guard.take() {
+                session.cancel.send_replace(true);
             }
         }
     }

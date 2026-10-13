@@ -232,33 +232,33 @@ impl Core {
         Ok(())
     }
     fn progress(&self, id: &str, phase: &str, processed: u64) {
-        if let Ok(mut jobs) = self.jobs.lock() {
-            if let Some(job) = jobs.get_mut(id) {
-                job.job.state = "running".into();
-                job.job.phase = phase.into();
-                job.job.processed = processed;
-            }
+        if let Ok(mut jobs) = self.jobs.lock()
+            && let Some(job) = jobs.get_mut(id)
+        {
+            job.job.state = "running".into();
+            job.job.phase = phase.into();
+            job.job.processed = processed;
         }
     }
     fn finish(&self, id: &str, result: Result<()>) {
         let success = result.is_ok();
-        if let Ok(mut jobs) = self.jobs.lock() {
-            if let Some(job) = jobs.get_mut(id) {
-                match result {
-                    Ok(()) => {
-                        job.job.state = "completed".into();
-                        job.job.phase = "ready".into();
-                    }
-                    Err(error) => {
-                        let cancelled =
-                            job.cancel.load(Ordering::Relaxed) || matches!(error, Error::Cancelled);
-                        job.job.state = if cancelled { "cancelled" } else { "failed" }.into();
-                        job.job.error = if cancelled {
-                            None
-                        } else {
-                            Some(error.to_string())
-                        };
-                    }
+        if let Ok(mut jobs) = self.jobs.lock()
+            && let Some(job) = jobs.get_mut(id)
+        {
+            match result {
+                Ok(()) => {
+                    job.job.state = "completed".into();
+                    job.job.phase = "ready".into();
+                }
+                Err(error) => {
+                    let cancelled =
+                        job.cancel.load(Ordering::Relaxed) || matches!(error, Error::Cancelled);
+                    job.job.state = if cancelled { "cancelled" } else { "failed" }.into();
+                    job.job.error = if cancelled {
+                        None
+                    } else {
+                        Some(error.to_string())
+                    };
                 }
             }
         }
@@ -283,7 +283,7 @@ impl Core {
             }
             import.channel(channel)?;
             count += 1;
-            if count % 256 == 0 {
+            if count.is_multiple_of(256) {
                 self.progress(job_id, "playlist", count);
             }
             Ok(())
@@ -313,7 +313,7 @@ impl Core {
                     }
                 }
                 processed += 1;
-                if processed % 256 == 0 {
+                if processed.is_multiple_of(256) {
                     self.progress(job_id, "epg", processed);
                 }
                 Ok(())

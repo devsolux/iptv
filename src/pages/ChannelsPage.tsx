@@ -21,7 +21,7 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
   const scope = JSON.stringify({ view: 'channels', filters });
   const bookmark = useMemo(() => useUiStore.getState().focus[scope], [scope]);
   const catalogue = useCatalogue(filters, bookmark?.index ?? 0);
-  const viewport = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLElement>(null);
   const columns = useColumns(viewport);
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,6 +73,7 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
       active = false;
     };
   }, [bookmark, filters, catalogue.pager]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each loaded page may make the restored index focusable.
   useEffect(() => {
     if (pendingRestore.current !== null && catalogue.ready && catalogue.total) {
       const index = pendingRestore.current;
@@ -120,6 +121,8 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
         <div
           className="heading-actions"
           id="page-actions"
+          role="toolbar"
+          aria-label="Page actions"
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') {
               event.preventDefault();
@@ -167,9 +170,10 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
           </Link>
         </Empty>
       )}
-      <div
+      <section
         ref={viewport}
         className="virtual-viewport channel-viewport"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must stay keyboard-focusable and is the focus fallback for virtualized cards.
         tabIndex={0}
         aria-label="Channel grid"
         data-roving-container
@@ -253,7 +257,7 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
             </div>
           ))}
         </div>
-      </div>
+      </section>
       <footer className="remote-hint">
         Arrow keys to explore <span>·</span> Enter to watch <span>·</span> Menu / M for actions{' '}
         <span>·</span> Back to return

@@ -7,9 +7,10 @@ import { api, BridgeError, errorMessage, isPreview } from '../lib/bridge';
 import type { Job, Source, SourceInput } from '../lib/contracts';
 import { useUiStore } from '../store/ui';
 
-const lines = (value: string) =>
+// URLs may legitimately contain commas (query strings, tokens): split them on lines only.
+const lines = (value: string, separator: RegExp = /\r?\n/) =>
   value
-    .split(/[\n,]/)
+    .split(separator)
     .map((line) => line.trim())
     .filter(Boolean);
 export default function SourcesPage() {
@@ -20,6 +21,7 @@ export default function SourcesPage() {
   const [remove, setRemove] = useState<Source | null>(null);
   const [refresh, setRefresh] = useState(0);
   const form = useRef<HTMLFormElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh restarts polling immediately after an action.
   useEffect(() => {
     let active = true;
     let pending = false;
@@ -53,7 +55,7 @@ export default function SourcesPage() {
       name: String(data.get('name') ?? '').trim(),
       playlistUrl: String(data.get('playlist') ?? '').trim(),
       epgUrls: lines(String(data.get('epg') ?? '')),
-      cdnHosts: lines(String(data.get('cdn') ?? '')).map((host) => host.toLowerCase()),
+      cdnHosts: lines(String(data.get('cdn') ?? ''), /[\s,]+/).map((host) => host.toLowerCase()),
       allowHttp: data.get('http') === 'on',
       allowLan: data.get('lan') === 'on',
       countryCode: String(data.get('country') ?? '')
@@ -110,11 +112,15 @@ export default function SourcesPage() {
     }
   }
   return (
-    <section className="page sources-page scroll-page" onKeyDown={dpadScope}>
+    <section
+      className="page sources-page scroll-page"
+      aria-labelledby="sources-title"
+      onKeyDown={dpadScope}
+    >
       <header className="page-heading">
         <div>
           <span className="eyebrow">MAKE IT YOURS</span>
-          <h1>Sources</h1>
+          <h1 id="sources-title">Sources</h1>
           <p className="muted">Bring your own playlists. Keep control of your library.</p>
         </div>
       </header>

@@ -212,7 +212,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
           path: ${{ runner.temp }}/build-inputs
@@ -305,7 +305,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
           path: ${{ runner.temp }}/build-inputs
@@ -410,7 +410,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
           path: ${{ runner.temp }}/build-inputs
@@ -577,12 +577,12 @@ jobs:
     steps:
       # No source checkout, npm install, or execution of downloaded build outputs
       # in this privileged job. Same-run artifacts do not need actions: write.
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: packages-*
           path: incoming
           merge-multiple: false
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
           path: ${{ runner.temp }}/build-inputs
@@ -669,7 +669,7 @@ jobs:
     steps:
       # Only this job can write release assets. It has no OIDC permission,
       # Android secrets, source checkout, or application build commands.
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.sign.outputs.artifact }}
           path: release-assets

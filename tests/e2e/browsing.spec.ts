@@ -12,6 +12,23 @@ test('fixture catalogue remains virtualized and navigates with remote keys', asy
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('.channel-card:focus')).toHaveCount(1);
 });
+test('reloading the catalogue keeps the grid position instead of jumping to the top', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const grid = page.getByRole('region', { name: 'Channel grid' });
+  await expect(page.locator('.channel-card').first()).toBeVisible();
+  await grid.evaluate((element) => {
+    element.scrollTop = 40_000;
+  });
+  await expect(page.locator('.channel-card[data-channel-index="0"]')).toHaveCount(0);
+  const before = await grid.evaluate((element) => element.scrollTop);
+  expect(before).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Reload catalogue' }).click();
+  await expect(page.locator('.channel-card').first()).toBeVisible();
+  expect(await grid.evaluate((element) => element.scrollTop)).toBe(before);
+  await expect(page.locator('.channel-card[data-channel-index="0"]')).toHaveCount(0);
+});
 test('guide provides a bounded time window and programmatic TV focus', async ({ page }) => {
   await page.goto('/#/guide');
   await expect(page.locator('.guide-row').first()).toBeVisible();

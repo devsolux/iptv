@@ -217,10 +217,10 @@ async fn play_native(
     .await
     .map_err(|_| Error::Player.public())?;
     state.core.relay.close(Some(&session_id));
-    if let Ok(mut active) = state.playback.lock() {
-        if active.as_ref().is_some_and(|p| p.session_id == session_id) {
-            *active = None;
-        }
+    if let Ok(mut active) = state.playback.lock()
+        && active.as_ref().is_some_and(|p| p.session_id == session_id)
+    {
+        *active = None;
     }
     result.map_err(|_| Error::Player.public())
 }
@@ -232,10 +232,10 @@ async fn close_playback(
 ) -> Reply<()> {
     iptv_core::db::valid_id(&session_id).map_err(|e| e.public())?;
     state.core.relay.close(Some(&session_id));
-    if let Ok(mut active) = state.playback.lock() {
-        if active.as_ref().is_some_and(|p| p.session_id == session_id) {
-            *active = None;
-        }
+    if let Ok(mut active) = state.playback.lock()
+        && active.as_ref().is_some_and(|p| p.session_id == session_id)
+    {
+        *active = None;
     }
     native_stop(app, session_id).await
 }
@@ -302,10 +302,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Unable to initialize IPTV")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(state) = app.try_state::<AppState>() {
-                    state.core.lock();
-                }
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(state) = app.try_state::<AppState>()
+            {
+                state.core.lock();
             }
         });
 }

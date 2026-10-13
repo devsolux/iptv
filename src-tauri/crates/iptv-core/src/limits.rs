@@ -32,7 +32,8 @@ impl<R: Read> Read for LimitedRead<R> {
             return Ok(0);
         }
         if self.cancel.load(Ordering::Relaxed) {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+            // Never `Interrupted`: std and quick-xml retry that kind, which would spin forever.
+            return Err(io::Error::other("cancelled"));
         }
         if self.remaining == 0 {
             let mut probe = [0u8; 1];

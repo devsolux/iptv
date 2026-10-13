@@ -31,7 +31,6 @@ export function Shell() {
     setError('');
     try {
       await api.lock();
-      useUiStore.getState().setStatus(await api.status());
     } catch (error) {
       setError(errorMessage(error));
     } finally {

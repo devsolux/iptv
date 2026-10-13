@@ -1,12 +1,18 @@
 use iptv_core::{
     db::Database,
+    limits::LimitedRead,
     m3u, manifest,
     models::{ChannelQuery, ParsedChannel, SourceInput, StreamSecret},
     network::NetworkPolicy,
     vault::Vault,
     xmltv,
 };
-use std::{collections::BTreeMap, io::Cursor, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    io::{BufReader, Cursor},
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool},
+};
 use url::Url;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -288,4 +294,49 @@ fn dash_rewrites_relative_templates_and_rejects_drm() {
         ))
         .is_err()
     );
+}
+#[test]
+fn cancelled_reads_fail_instead_of_spinning_in_the_xml_reader() {
+    // quick-xml and std retry `Interrupted`; cancellation must surface as a hard error.
+    let xml = r#"<tv><channel id="news"><display-name>News</display-name></channel></tv>"#;
+    for limit in [0, 8, 1024] {
+        let cancel = Arc::new(AtomicBool::new(true));
+        let input = BufReader::new(LimitedRead::new(Cursor::new(xml), limit, cancel));
+        assert!(xmltv::parse(input, |_| Ok(())).is_err());
+    }
+}
+#[test]
+fn an_open_import_does_not_block_concurrent_catalogue_writes() {
+    let profile = Profile::new();
+    let db = Database::open(profile.0.join("catalogue.db")).unwrap();
+    let vault = Vault::new(profile.0.join("vault"));
+    vault
+        .unlock(Zeroizing::new("a long test passphrase".into()))
+        .unwrap();
+    let source = db.save_source(&source(), &vault).unwrap();
+    let mut import = db.importer(&source, &vault).unwrap();
+    import
+        .channel(channel("https://provider.invalid/a"))
+        .unwrap();
+    import.activate().unwrap();
+    let id = db.channels(&query()).unwrap().items[0].id.clone();
+    // A refresh is mid-download: rows are queued but the parser is waiting on the network.
+    let mut refresh = db.importer(&source, &vault).unwrap();
+    refresh
+        .channel(channel("https://provider.invalid/a?token=new"))
+        .unwrap();
+    let started = std::time::Instant::now();
+    db.favorite(&id, true).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    refresh.activate().unwrap();
+    assert!(db.channels(&query()).unwrap().items[0].favorite);
+}
+#[test]
+fn xmltv_rejects_non_utf8_text_and_attributes() {
+    for xml in [
+        &b"<tv><channel id=\"a\"><display-name>\xff</display-name></channel></tv>"[..],
+        &b"<tv><channel id=\"\xff\"><display-name>A</display-name></channel></tv>"[..],
+    ] {
+        assert!(xmltv::parse(Cursor::new(xml), |_| Ok(())).is_err());
+    }
 }

@@ -72,6 +72,22 @@ export class CataloguePager {
     this.emit();
     this.pump();
   }
+  /**
+   * Re-reads the current filter after a catalogue change. Unlike `reset`, the known total and
+   * requested window are kept, so a virtualized view neither collapses nor loses its position.
+   */
+  refresh(): void {
+    if (this.disposed) return;
+    this.retries = 0;
+    this.reload();
+  }
+  private reload(): void {
+    this.generation++;
+    this.cache.clear();
+    this.snapshot = { ...this.snapshot, pages: new Map(), revision: null, error: null };
+    this.emit();
+    this.pump();
+  }
   wantRange(first: number, last: number): void {
     const start = Math.max(0, Math.floor(first / PAGE_SIZE));
     const end = Math.min(start + 2, Math.max(start, Math.floor(last / PAGE_SIZE)));
@@ -138,7 +154,7 @@ export class CataloguePager {
             error.code === 'STALE' &&
             this.retries++ < 2
           ) {
-            this.restart((this.wanted[0] ?? 0) * PAGE_SIZE);
+            this.reload();
           } else {
             this.snapshot = { ...this.snapshot, ready: true, error };
           }

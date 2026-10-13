@@ -388,13 +388,12 @@ impl Database {
             "INSERT INTO generations VALUES(?1,?2,'staging',?3)",
             params![generation, source_id, chrono::Utc::now().timestamp()],
         )?;
-        connection.execute_batch("BEGIN IMMEDIATE")?;
         Ok(Import {
             connection,
             vault,
             source_id: source_id.to_owned(),
             generation,
-            batch: 0,
+            pending: Vec::with_capacity(IMPORT_BATCH),
             ordinal: 0,
             activated: false,
         })
@@ -426,145 +425,86 @@ fn bump_revision(c: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Rows written per staging transaction.
+const IMPORT_BATCH: usize = 256;
+
+enum Row {
+    Channel(ParsedChannel),
+    EpgChannel(String, usize, EpgChannel),
+    Programme(String, EpgProgramme),
+}
+
 pub struct Import<'a> {
     connection: Connection,
     vault: &'a Vault,
     source_id: String,
     generation: String,
-    batch: usize,
+    pending: Vec<Row>,
     ordinal: i64,
     activated: bool,
 }
 impl Import<'_> {
-    fn advance(&mut self) -> Result<()> {
-        self.batch += 1;
-        if self.batch >= 256 {
-            self.connection.execute_batch("COMMIT; BEGIN IMMEDIATE;")?;
-            self.batch = 0;
-        }
-        Ok(())
-    }
     pub fn channel(&mut self, channel: ParsedChannel) -> Result<()> {
-        self.ordinal += 1;
-        let namespace = Uuid::parse_str(&self.source_id).map_err(|_| Error::Storage)?;
-        // The channel is stable across token/URL changes. Stream variants remain separate.
-        let identity = if channel.tvg_id.is_empty() {
-            format!("name:{}", normalized(&channel.name))
-        } else {
-            format!("tvg:{}|{}", channel.tvg_id, normalized(&channel.name))
-        };
-        let id = Uuid::new_v5(&namespace, identity.as_bytes());
-        let stream = Zeroizing::new(serde_json::to_vec(&channel.stream)?);
-        let variant = Uuid::new_v5(&id, &stream).to_string();
-        let secret = self.vault.seal(&format!("stream:{variant}"), &stream)?;
-        let metadata = Zeroizing::new(serde_json::to_vec(
-            &serde_json::json!({"logo":channel.logo,"catchup":channel.catchup}),
-        )?);
-        let metadata = self.vault.seal(&format!("metadata:{id}"), &metadata)?;
-        let id = id.to_string();
-        let epg_name = if channel.tvg_name.is_empty() {
-            normalized(&channel.name)
-        } else {
-            normalized(&channel.tvg_name)
-        };
-        self.connection.execute(
-            "INSERT OR IGNORE INTO channel_entries VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![
-                self.source_id,
-                self.generation,
-                id,
-                channel.name,
-                normalized(&channel.name),
-                channel.tvg_id,
-                epg_name,
-                channel.country,
-                channel.shift_seconds,
-                metadata
-            ],
-        )?;
-        self.connection.execute(
-            "INSERT OR IGNORE INTO stream_variants VALUES(?1,?2,?3,?4,?5)",
-            params![self.generation, id, variant, secret, self.ordinal],
-        )?;
-        let count: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM stream_variants WHERE generation=?1 AND channel_id=?2",
-            params![self.generation, id],
-            |r| r.get(0),
-        )?;
-        if count > 32 {
-            return Err(Error::Invalid(
-                "A channel has more than 32 stream variants; use unique names or TVG IDs.",
-            ));
-        }
-        let groups = if channel.groups.is_empty() {
-            vec!["Ungrouped".to_owned()]
-        } else {
-            channel.groups
-        };
-        for group in groups {
-            if group.len() > 512 {
-                return Err(Error::Limit);
-            }
-            self.connection.execute(
-                "INSERT OR IGNORE INTO channel_groups VALUES(?1,?2,?3)",
-                params![self.generation, id, group.trim()],
-            )?;
-        }
-        for code in channel
-            .country
-            .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
-        {
-            let code = code.trim().to_ascii_uppercase();
-            if code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic()) {
-                self.connection.execute(
-                    "INSERT OR IGNORE INTO channel_countries VALUES(?1,?2,?3)",
-                    params![self.generation, id, code],
-                )?;
-            }
-        }
-        self.advance()
+        self.queue(Row::Channel(channel))
     }
     pub fn epg_channel(&mut self, feed: &str, priority: usize, channel: EpgChannel) -> Result<()> {
-        let names = if channel.names.is_empty() {
-            vec![String::new()]
-        } else {
-            channel.names
-        };
-        for name in names {
-            self.connection.execute(
-                "INSERT OR IGNORE INTO epg_channels VALUES(?1,?2,?3,?4,?5)",
-                params![
-                    self.generation,
-                    feed,
-                    channel.id,
-                    normalized(&name),
-                    priority as i64
-                ],
-            )?;
-        }
-        self.advance()
+        self.queue(Row::EpgChannel(feed.to_owned(), priority, channel))
     }
     pub fn programme(&mut self, feed: &str, programme: EpgProgramme, now: i64) -> Result<()> {
         if programme.end > now - 86400 && programme.start < now + 14 * 86400 {
-            self.connection.execute(
-                "INSERT OR IGNORE INTO programmes VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    self.generation,
-                    feed,
-                    programme.channel,
-                    programme.start,
-                    programme.end,
-                    programme.title,
-                    programme.description
-                ],
-            )?;
-            self.advance()?;
+            self.queue(Row::Programme(feed.to_owned(), programme))?;
         }
         Ok(())
     }
+    fn queue(&mut self, row: Row) -> Result<()> {
+        self.pending.push(row);
+        if self.pending.len() >= IMPORT_BATCH {
+            self.flush()?;
+        }
+        Ok(())
+    }
+    /// Writes queued rows in one short transaction. The parser pulls from the network
+    /// between rows, so holding SQLite's write lock across reads would stall concurrent
+    /// favorites and source edits until their busy timeout fails them.
+    fn flush(&mut self) -> Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let rows = std::mem::take(&mut self.pending);
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for row in rows {
+            match row {
+                Row::Channel(channel) => {
+                    self.ordinal += 1;
+                    write_channel(
+                        &tx,
+                        self.vault,
+                        &self.source_id,
+                        &self.generation,
+                        self.ordinal,
+                        channel,
+                    )?;
+                }
+                Row::EpgChannel(feed, priority, channel) => {
+                    write_epg_channel(&tx, &self.generation, &feed, priority, channel)?;
+                }
+                Row::Programme(feed, programme) => {
+                    write_programme(&tx, &self.generation, &feed, programme)?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn activate(mut self) -> Result<()> {
-        match_epg(&self.connection, &self.generation)?;
-        self.connection.execute(
+        self.flush()?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        match_epg(&tx, &self.generation)?;
+        tx.execute(
             "UPDATE sources SET active_generation=?1,updated_at=?2 WHERE id=?3",
             params![
                 self.generation,
@@ -572,31 +512,164 @@ impl Import<'_> {
                 self.source_id
             ],
         )?;
-        self.connection.execute(
+        tx.execute(
             "UPDATE generations SET state='active' WHERE id=?1",
             [&self.generation],
         )?;
         // Delete old rows after the new reference is changed, inside the same transaction.
-        self.connection.execute(
+        tx.execute(
             "DELETE FROM generations WHERE source_id=?1 AND id<>?2",
             params![self.source_id, self.generation],
         )?;
-        bump_revision(&self.connection)?;
-        self.connection.execute_batch("COMMIT")?;
+        bump_revision(&tx)?;
+        tx.commit()?;
         self.activated = true;
         Ok(())
     }
 }
 impl Drop for Import<'_> {
     fn drop(&mut self) {
+        // An unfinished batch rolled back with its transaction; committed staging
+        // batches are removed together with their generation.
         if !self.activated {
-            let _ = self.connection.execute_batch("ROLLBACK");
             let _ = self.connection.execute(
                 "DELETE FROM generations WHERE id=?1 AND state='staging'",
                 [&self.generation],
             );
         }
     }
+}
+fn write_channel(
+    c: &Connection,
+    vault: &Vault,
+    source_id: &str,
+    generation: &str,
+    ordinal: i64,
+    channel: ParsedChannel,
+) -> Result<()> {
+    let namespace = Uuid::parse_str(source_id).map_err(|_| Error::Storage)?;
+    // The channel is stable across token/URL changes. Stream variants remain separate.
+    let identity = if channel.tvg_id.is_empty() {
+        format!("name:{}", normalized(&channel.name))
+    } else {
+        format!("tvg:{}|{}", channel.tvg_id, normalized(&channel.name))
+    };
+    let id = Uuid::new_v5(&namespace, identity.as_bytes());
+    let stream = Zeroizing::new(serde_json::to_vec(&channel.stream)?);
+    let variant = Uuid::new_v5(&id, &stream).to_string();
+    let secret = vault.seal(&format!("stream:{variant}"), &stream)?;
+    let metadata = Zeroizing::new(serde_json::to_vec(
+        &serde_json::json!({"logo":channel.logo,"catchup":channel.catchup}),
+    )?);
+    let metadata = vault.seal(&format!("metadata:{id}"), &metadata)?;
+    let id = id.to_string();
+    let epg_name = if channel.tvg_name.is_empty() {
+        normalized(&channel.name)
+    } else {
+        normalized(&channel.tvg_name)
+    };
+    c.execute(
+        "INSERT OR IGNORE INTO channel_entries VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            source_id,
+            generation,
+            id,
+            channel.name,
+            normalized(&channel.name),
+            channel.tvg_id,
+            epg_name,
+            channel.country,
+            channel.shift_seconds,
+            metadata
+        ],
+    )?;
+    c.execute(
+        "INSERT OR IGNORE INTO stream_variants VALUES(?1,?2,?3,?4,?5)",
+        params![generation, id, variant, secret, ordinal],
+    )?;
+    let count: i64 = c.query_row(
+        "SELECT COUNT(*) FROM stream_variants WHERE generation=?1 AND channel_id=?2",
+        params![generation, id],
+        |r| r.get(0),
+    )?;
+    if count > 32 {
+        return Err(Error::Invalid(
+            "A channel has more than 32 stream variants; use unique names or TVG IDs.",
+        ));
+    }
+    let groups = if channel.groups.is_empty() {
+        vec!["Ungrouped".to_owned()]
+    } else {
+        channel.groups
+    };
+    for group in groups {
+        if group.len() > 512 {
+            return Err(Error::Limit);
+        }
+        c.execute(
+            "INSERT OR IGNORE INTO channel_groups VALUES(?1,?2,?3)",
+            params![generation, id, group.trim()],
+        )?;
+    }
+    for code in channel
+        .country
+        .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+    {
+        let code = code.trim().to_ascii_uppercase();
+        if code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic()) {
+            c.execute(
+                "INSERT OR IGNORE INTO channel_countries VALUES(?1,?2,?3)",
+                params![generation, id, code],
+            )?;
+        }
+    }
+    Ok(())
+}
+fn write_epg_channel(
+    c: &Connection,
+    generation: &str,
+    feed: &str,
+    priority: usize,
+    channel: EpgChannel,
+) -> Result<()> {
+    let names = if channel.names.is_empty() {
+        vec![String::new()]
+    } else {
+        channel.names
+    };
+    for name in names {
+        c.execute(
+            "INSERT OR IGNORE INTO epg_channels VALUES(?1,?2,?3,?4,?5)",
+            params![
+                generation,
+                feed,
+                channel.id,
+                normalized(&name),
+                priority as i64
+            ],
+        )?;
+    }
+    Ok(())
+}
+fn write_programme(
+    c: &Connection,
+    generation: &str,
+    feed: &str,
+    programme: EpgProgramme,
+) -> Result<()> {
+    c.execute(
+        "INSERT OR IGNORE INTO programmes VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        params![
+            generation,
+            feed,
+            programme.channel,
+            programme.start,
+            programme.end,
+            programme.title,
+            programme.description
+        ],
+    )?;
+    Ok(())
 }
 fn match_epg(c: &Connection, generation: &str) -> Result<()> {
     c.execute("DELETE FROM epg_links WHERE generation=?1", [generation])?;

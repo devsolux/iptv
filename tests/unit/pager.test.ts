@@ -106,3 +106,32 @@ test('late responses after disposal do not publish a page or emit to subscribers
   assert.equal(events, before);
   assert.equal(pager.getSnapshot().pages.size, 0);
 });
+test('catalogue refresh keeps the total and visible window instead of collapsing the view', async () => {
+  let revision = 1;
+  const queries: ChannelQuery[] = [];
+  const pager = new CataloguePager(async (query) => {
+    queries.push(query);
+    return page(query, revision);
+  });
+  pager.reset(filters);
+  await tick();
+  pager.wantRange(40 * PAGE_SIZE, 40 * PAGE_SIZE + 79);
+  await tick();
+  revision = 2;
+  queries.length = 0;
+  const totals: number[] = [];
+  pager.subscribe(() => totals.push(pager.getSnapshot().total));
+  pager.refresh();
+  assert.ok(totals.length > 0 && totals.every((total) => total === 50000));
+  assert.equal(pager.getSnapshot().ready, true);
+  await tick();
+  assert.deepEqual(
+    queries.map((query) => [query.offset, query.revision]),
+    [[40 * PAGE_SIZE, null]],
+  );
+  assert.equal(pager.getSnapshot().revision, 2);
+  assert.equal(pager.at(40 * PAGE_SIZE)?.id, `channel-${40 * PAGE_SIZE}`);
+  pager.dispose();
+  pager.refresh();
+  assert.equal(queries.length, 1);
+});

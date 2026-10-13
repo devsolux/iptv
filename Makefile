@@ -88,7 +88,8 @@ GITHUB_FULL ?= $(GITHUB_ORG)/$(GITHUB_REPO)
 GIT_REMOTE_SSH ?= git@github.com:$(GITHUB_FULL).git
 
 .PHONY: git-check github-check github-auth git-init git-main github-initial-commit \
-	github-repo-create github-remote-ssh github-verify github-pull github-push github-bootstrap
+	github-repo-create github-remote-ssh github-verify github-pull github-push github-bootstrap \
+	github-allow-action github-run-workflow
 
 git-check:
 	@command -v git >/dev/null 2>&1 || { echo "error: git is required"; exit 1; }
@@ -240,8 +241,8 @@ github-bootstrap:
 	@$(MAKE) github-repo-create
 	@$(MAKE) github-verify
 
-github-allow-action: github-check ## Repo setting: let the daily workflow open pull requests with github.token
+github-allow-action: github-check ## Repo setting: read-only default GITHUB_TOKEN; allow Actions to create and approve PRs
 	gh api -X PUT repos/$(GITHUB_FULL)/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
 
-github-run-workflow: github-check ## Trigger the daily release refresh now (refresh, sign, three-OS verify, PR, auto-merge if enabled)
+github-run-workflow: github-check ## Dispatch releases.yml: resolve deps, verify, build desktop + Android, sign; artifacts stay in Actions
 	gh workflow run releases.yml --repo $(GITHUB_FULL)

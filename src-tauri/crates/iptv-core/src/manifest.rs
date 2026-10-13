@@ -3,7 +3,7 @@ use crate::{
     limits::MAX_MANIFEST_BYTES,
 };
 use quick_xml::{
-    Reader, Writer,
+    Reader, Writer, XmlVersion,
     events::{BytesEnd, BytesStart, BytesText, Event},
 };
 use url::Url;
@@ -26,12 +26,11 @@ pub fn hls(
         if line.contains("{$") {
             return Err(Error::Unsupported);
         }
-        if line.starts_with("#EXT-X-KEY:") || line.starts_with("#EXT-X-SESSION-KEY:") {
-            if (line.contains("KEYFORMAT=") && !line.contains("KEYFORMAT=\"identity\""))
-                || !(line.contains("METHOD=AES-128") || line.contains("METHOD=NONE"))
-            {
-                return Err(Error::Unsupported);
-            }
+        if (line.starts_with("#EXT-X-KEY:") || line.starts_with("#EXT-X-SESSION-KEY:"))
+            && ((line.contains("KEYFORMAT=") && !line.contains("KEYFORMAT=\"identity\""))
+                || !(line.contains("METHOD=AES-128") || line.contains("METHOD=NONE")))
+        {
+            return Err(Error::Unsupported);
         }
         if line.starts_with('#') {
             let mut tail = line;
@@ -114,17 +113,13 @@ fn parse_xml(input: &str) -> Result<Element> {
         {
             Event::Start(e) | Event::Empty(e) => {
                 // Empty elements are expanded by quick-xml into matching start/end events.
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|_| Error::Unsupported)?
-                    .to_owned();
+                let name = e.name().as_ref().to_owned();
                 let mut attributes = Vec::new();
                 for a in e.attributes() {
                     let a = a.map_err(|_| Error::Unsupported)?;
                     attributes.push((
-                        std::str::from_utf8(a.key.as_ref())
-                            .map_err(|_| Error::Unsupported)?
-                            .to_owned(),
-                        a.decode_and_unescape_value(reader.decoder())
+                        a.key.as_ref().to_owned(),
+                        a.normalized_value(XmlVersion::Implicit1_0)
                             .map_err(|_| Error::Unsupported)?
                             .into_owned(),
                     ));
@@ -149,20 +144,20 @@ fn parse_xml(input: &str) -> Result<Element> {
             }
             Event::Text(e) => {
                 if let Some(parent) = stack.last_mut() {
-                    parent.children.push(Child::Text(
-                        e.decode().map_err(|_| Error::Unsupported)?.into_owned(),
-                    ));
+                    parent
+                        .children
+                        .push(Child::Text(e.xml10_content().into_owned()));
                 }
             }
             Event::CData(e) => {
                 if let Some(parent) = stack.last_mut() {
-                    parent.children.push(Child::Text(
-                        e.decode().map_err(|_| Error::Unsupported)?.into_owned(),
-                    ));
+                    parent
+                        .children
+                        .push(Child::Text(e.xml10_content().into_owned()));
                 }
             }
             Event::GeneralRef(e) => {
-                let escaped = format!("&{};", e.decode().map_err(|_| Error::Unsupported)?);
+                let escaped = format!("&{};", &*e);
                 let text = quick_xml::escape::unescape(&escaped)
                     .map_err(|_| Error::Unsupported)?
                     .into_owned();
@@ -174,7 +169,6 @@ fn parse_xml(input: &str) -> Result<Element> {
             Event::Eof => break,
             _ => {}
         }
-        reader.config_mut().expand_empty_elements = true;
     }
     if !stack.is_empty() {
         return Err(Error::Unsupported);

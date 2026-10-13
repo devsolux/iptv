@@ -35,7 +35,8 @@ export const programmeSchema = z.object({
   channelId: id,
   start: z.number().int(),
   end: z.number().int(),
-  title: z.string().max(512),
+  // Rust truncates to 512 / 8192 characters; zod counts UTF-16 units (up to two per character).
+  title: z.string().max(1024),
   description: z.string().max(32768),
 });
 export const guideSchema = z.object({

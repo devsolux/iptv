@@ -9,7 +9,7 @@ import {
 import { gridNeighbour, isDirection } from '../lib/focus';
 
 interface Options {
-  container: RefObject<HTMLDivElement | null>;
+  container: RefObject<HTMLElement | null>;
   count: number;
   columns: number;
   initialIndex?: number;
@@ -43,6 +43,7 @@ export function useDpadFocus(options: Options) {
       pending.current = false;
     }
   }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: updateToken signals newly mounted items to focus.
   useLayoutEffect(() => {
     if (selected >= options.count && options.count > 0) {
       active.current = options.count - 1;
@@ -57,7 +58,7 @@ export function useDpadFocus(options: Options) {
     }
   }, [options.updateToken, options.count, selected]);
   const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>) => {
+    (event: KeyboardEvent<HTMLElement>) => {
       if (!isDirection(event.key)) return;
       const current = latest.current;
       const next = gridNeighbour(active.current, current.count, current.columns, event.key);

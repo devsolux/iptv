@@ -108,10 +108,10 @@ pub fn parse<R: BufRead>(
                 }
             }
         } else if let Some(option) = value.strip_prefix("#EXTVLCOPT:") {
-            if let Some(entry) = pending.as_mut() {
-                if let Some((name, value)) = option.split_once('=') {
-                    header(&mut entry.stream.headers, name, value)?;
-                }
+            if let Some(entry) = pending.as_mut()
+                && let Some((name, value)) = option.split_once('=')
+            {
+                header(&mut entry.stream.headers, name, value)?;
             }
         } else if !value.starts_with('#') {
             let mut entry = pending

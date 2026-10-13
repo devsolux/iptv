@@ -45,6 +45,7 @@ export function usePlayer(
   const trackControls = useRef<TrackControls | null>(null);
   const onEnd = useRef(onNativeEnd);
   onEnd.current = onNativeEnd;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger that reopens the session.
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -266,21 +267,19 @@ export function usePlayer(
     const element = video.current;
     if (!element) return;
     if (element.paused)
-      void element
-        .play()
-        .catch(() =>
-          setState((state) => ({
-            ...state,
-            phase: 'error',
-            message: 'The stream could not resume. Retry the channel.',
-          })),
-        );
+      void element.play().catch(() =>
+        setState((state) => ({
+          ...state,
+          phase: 'error',
+          message: 'The stream could not resume. Retry the channel.',
+        })),
+      );
     else element.pause();
   }, [video]);
   const seek = useCallback(
     (delta: number) => {
       const element = video.current;
-      if (!element || !element.seekable.length) return;
+      if (!element?.seekable.length) return;
       const last = element.seekable.length - 1;
       element.currentTime = Math.max(
         element.seekable.start(last),

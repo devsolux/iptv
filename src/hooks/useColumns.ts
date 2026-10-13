@@ -1,5 +1,5 @@
 import { type RefObject, useLayoutEffect, useState } from 'react';
-export function useColumns(element: RefObject<HTMLDivElement | null>, minimum = 230) {
+export function useColumns(element: RefObject<HTMLElement | null>, minimum = 230) {
   const [columns, setColumns] = useState(3);
   useLayoutEffect(() => {
     const target = element.current;
