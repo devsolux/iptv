@@ -13,7 +13,16 @@ pub struct PlaylistMetadata {
 
 /// Streaming catalogue parser. HLS media manifests belong to the player, not this parser.
 pub fn parse<R: BufRead>(
+    reader: R,
+    emit: impl FnMut(ParsedChannel) -> Result<()>,
+) -> Result<PlaylistMetadata> {
+    parse_with(reader, false, emit)
+}
+/// `allow_empty` accepts a well-formed playlist without entries: an official aggregated
+/// playlist can legitimately be empty while other selected playlists are not.
+pub fn parse_with<R: BufRead>(
     mut reader: R,
+    allow_empty: bool,
     mut emit: impl FnMut(ParsedChannel) -> Result<()>,
 ) -> Result<PlaylistMetadata> {
     let mut line = String::new();
@@ -134,7 +143,7 @@ pub fn parse<R: BufRead>(
             emit(entry)?;
         }
     }
-    if !started || pending.is_some() || meta.count == 0 {
+    if !started || pending.is_some() || (meta.count == 0 && !allow_empty) {
         return Err(Error::Invalid(
             "The playlist is empty or incomplete; the previous catalogue was preserved.",
         ));

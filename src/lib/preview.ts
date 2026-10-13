@@ -73,6 +73,7 @@ export async function previewCommand(
         {
           id: sourceId,
           name: 'Development catalogue',
+          kind: 'm3u',
           channels: count,
           updatedAt: Math.floor(Date.now() / 1000),
           hasEpg: true,
@@ -105,6 +106,23 @@ export async function previewCommand(
       return channels(args.query as ChannelQuery);
     case 'query_groups':
       return groups;
+    case 'iptv_org_catalog':
+      return {
+        countries: regions.map((code) => ({
+          code,
+          name: code,
+          flag: '',
+          officialLanguageCodes: [],
+          playlistCandidateUrl: `https://iptv-org.github.io/iptv/countries/${code.toLowerCase()}.m3u`,
+        })),
+        categories: groups.map((name) => ({ id: name.toLowerCase(), name })),
+        languages: [
+          { code: 'eng', name: 'English' },
+          { code: 'deu', name: 'German' },
+          { code: 'tur', name: 'Turkish' },
+        ],
+        regions: [{ code: 'EUR', name: 'Europe', countries: ['DE', 'FR', 'GB', 'TR'] }],
+      };
     case 'query_guide':
       return guide(args.query as GuideQuery);
     default:

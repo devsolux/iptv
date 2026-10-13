@@ -2,7 +2,7 @@
 identifier = "allow-iptv-commands"
 description = "IPTV domain API. Source secrets and database SQL remain in Rust."
 commands.allow = [
-  "app_status", "unlock", "lock", "exit_app", "query_countries", "locate_channel", "list_jobs", "list_sources", "save_source", "remove_source",
+  "app_status", "unlock", "lock", "exit_app", "query_countries", "iptv_org_catalog", "locate_channel", "list_jobs", "list_sources", "save_source", "remove_source",
   "refresh_source", "job_status", "cancel_job", "query_channels", "query_groups",
   "query_guide", "set_favorite", "set_epg_mapping", "open_playback", "play_native", "close_playback"
 ]

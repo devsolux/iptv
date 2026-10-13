@@ -1,10 +1,12 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { ErrorNotice } from '../components/Feedback';
 import { Icon } from '../components/Icon';
+import { IptvOrgFields } from '../components/IptvOrgFields';
 import { Modal } from '../components/Modal';
 import { dpadScope } from '../hooks/useDpadScope';
 import { api, BridgeError, errorMessage, isPreview } from '../lib/bridge';
-import type { Job, Source, SourceInput } from '../lib/contracts';
+import type { IptvOrgCatalog, Job, Source, SourceInput } from '../lib/contracts';
+import { buildIptvOrgConfig, defaultIptvOrgValues, type IptvOrgFormValues } from '../lib/iptv-org';
 import { useUiStore } from '../store/ui';
 
 // URLs may legitimately contain commas (query strings, tokens): split them on lines only.
@@ -21,6 +23,22 @@ export default function SourcesPage() {
   const [remove, setRemove] = useState<Source | null>(null);
   const [refresh, setRefresh] = useState(0);
   const form = useRef<HTMLFormElement>(null);
+  const [kind, setKind] = useState<'m3u' | 'iptv-org'>('m3u');
+  const [org, setOrg] = useState<IptvOrgFormValues>(defaultIptvOrgValues);
+  const [catalog, setCatalog] = useState<IptvOrgCatalog | null>(null);
+  const [catalogState, setCatalogState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  useEffect(() => {
+    // Presentation lists for the pickers; codes can always be typed without them.
+    if (kind !== 'iptv-org' || catalogState !== 'idle') return;
+    setCatalogState('loading');
+    void api
+      .iptvOrgCatalog(null, null)
+      .then((result) => {
+        setCatalog(result);
+        setCatalogState('ready');
+      })
+      .catch(() => setCatalogState('failed'));
+  }, [kind, catalogState]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh restarts polling immediately after an action.
   useEffect(() => {
     let active = true;
@@ -51,22 +69,44 @@ export default function SourcesPage() {
     event.preventDefault();
     if (saving || isPreview) return;
     const data = new FormData(event.currentTarget);
-    const input: SourceInput = {
-      name: String(data.get('name') ?? '').trim(),
-      playlistUrl: String(data.get('playlist') ?? '').trim(),
-      epgUrls: lines(String(data.get('epg') ?? '')),
-      cdnHosts: lines(String(data.get('cdn') ?? ''), /[\s,]+/).map((host) => host.toLowerCase()),
-      allowHttp: data.get('http') === 'on',
-      allowLan: data.get('lan') === 'on',
-      countryCode: String(data.get('country') ?? '')
-        .trim()
-        .toUpperCase(),
-    };
+    let input: SourceInput;
+    if (kind === 'iptv-org') {
+      const built = buildIptvOrgConfig(org);
+      if (!built.ok) {
+        setError(built.error);
+        return;
+      }
+      input = {
+        name: String(data.get('name') ?? '').trim(),
+        playlistUrl: built.playlistBase,
+        epgUrls: lines(String(data.get('epg') ?? '')),
+        cdnHosts: [],
+        allowHttp: data.get('http') === 'on',
+        allowLan: false,
+        countryCode: '',
+        iptvOrg: built.config,
+      };
+    } else {
+      // The own-playlist contract is unchanged; the iptv-org section is simply absent.
+      input = {
+        name: String(data.get('name') ?? '').trim(),
+        playlistUrl: String(data.get('playlist') ?? '').trim(),
+        epgUrls: lines(String(data.get('epg') ?? '')),
+        cdnHosts: lines(String(data.get('cdn') ?? ''), /[\s,]+/).map((host) => host.toLowerCase()),
+        allowHttp: data.get('http') === 'on',
+        allowLan: data.get('lan') === 'on',
+        countryCode: String(data.get('country') ?? '')
+          .trim()
+          .toUpperCase(),
+        iptvOrg: null,
+      };
+    }
     setSaving(true);
     setError('');
     try {
       const id = await api.addSource(input);
       form.current?.reset(); // Do not leave provider credentials in form fields after saving.
+      setOrg(defaultIptvOrgValues);
       try {
         await api.refreshSource(id);
       } catch (error) {
@@ -139,8 +179,8 @@ export default function SourcesPage() {
             <div className="info-card">
               <h2>A fresh start.</h2>
               <p>
-                Add a provider’s M3U URL and, optionally, its XMLTV guide. No channels or accounts
-                are bundled with IPTV.
+                Add a provider’s M3U URL or an iptv-org selection and, optionally, an XMLTV guide.
+                No channels or accounts are bundled with IPTV.
               </p>
             </div>
           )}
@@ -156,6 +196,7 @@ export default function SourcesPage() {
                   <div>
                     <h2>{source.name}</h2>
                     <p>
+                      {source.kind === 'iptv-org' ? 'iptv-org' : 'M3U playlist'} ·{' '}
                       {source.channels.toLocaleString()} channels ·{' '}
                       {source.hasEpg ? 'Guide configured' : 'No guide configured'}
                     </p>
@@ -228,6 +269,11 @@ export default function SourcesPage() {
               Guide feeds are processed in the order entered. Exact TVG IDs take priority; ambiguous
               name matches remain unassigned.
             </p>
+            <p>
+              iptv-org sources import either the official prebuilt playlists or a local selection
+              from the public JSON datasets. Their channel IDs follow the ChannelId@FeedId
+              convention, so a matching XMLTV guide can be attached like any other.
+            </p>
           </div>
         </div>
         <form
@@ -238,6 +284,31 @@ export default function SourcesPage() {
         >
           <span className="eyebrow">ADD TO YOUR LIBRARY</span>
           <h2>New source</h2>
+          <fieldset className="source-type" disabled={saving}>
+            <legend className="sr-only">Source type</legend>
+            <label>
+              <input
+                data-focus
+                type="radio"
+                name="kind"
+                value="m3u"
+                checked={kind === 'm3u'}
+                onChange={() => setKind('m3u')}
+              />
+              <span>Own M3U playlist</span>
+            </label>
+            <label>
+              <input
+                data-focus
+                type="radio"
+                name="kind"
+                value="iptv-org"
+                checked={kind === 'iptv-org'}
+                onChange={() => setKind('iptv-org')}
+              />
+              <span>iptv-org public catalogue</span>
+            </label>
+          </fieldset>
           <label>
             Source name
             <input
@@ -246,24 +317,34 @@ export default function SourcesPage() {
               name="name"
               required
               maxLength={128}
-              placeholder="My living room playlist"
+              placeholder={kind === 'iptv-org' ? 'iptv-org · Germany' : 'My living room playlist'}
               disabled={saving || isPreview}
             />
           </label>
-          <label>
-            M3U playlist URL
-            <input
-              data-focus
-              name="playlist"
-              type="url"
-              required
-              maxLength={16384}
-              placeholder="https://provider.example/playlist.m3u"
-              autoCapitalize="none"
-              spellCheck={false}
+          {kind === 'm3u' ? (
+            <label>
+              M3U playlist URL
+              <input
+                data-focus
+                name="playlist"
+                type="url"
+                required
+                maxLength={16384}
+                placeholder="https://provider.example/playlist.m3u"
+                autoCapitalize="none"
+                spellCheck={false}
+                disabled={saving || isPreview}
+              />
+            </label>
+          ) : (
+            <IptvOrgFields
+              values={org}
+              onChange={setOrg}
               disabled={saving || isPreview}
+              catalog={catalog}
+              catalogState={catalogState}
             />
-          </label>
+          )}
           <label>
             XMLTV guide URLs <span className="optional">Optional · one per line, up to four</span>
             <textarea
@@ -277,44 +358,55 @@ export default function SourcesPage() {
               disabled={saving || isPreview}
             />
           </label>
-          <label>
-            Default country{' '}
-            <span className="optional">Optional · two letters, such as DE or TR</span>
-            <input
-              data-focus
-              name="country"
-              maxLength={2}
-              pattern="[A-Za-z]{2}"
-              placeholder="DE"
-              autoCapitalize="characters"
-              disabled={saving || isPreview}
-            />
-          </label>
-          <label>
-            Approved CDN hosts{' '}
-            <span className="optional">Optional · exact hostnames, one per line</span>
-            <textarea
-              data-focus
-              name="cdn"
-              rows={2}
-              maxLength={8192}
-              placeholder="cdn.provider.example"
-              autoCapitalize="none"
-              spellCheck={false}
-              disabled={saving || isPreview}
-            />
-          </label>
+          {kind === 'm3u' && (
+            <>
+              <label>
+                Default country{' '}
+                <span className="optional">Optional · two letters, such as DE or TR</span>
+                <input
+                  data-focus
+                  name="country"
+                  maxLength={2}
+                  pattern="[A-Za-z]{2}"
+                  placeholder="DE"
+                  autoCapitalize="characters"
+                  disabled={saving || isPreview}
+                />
+              </label>
+              <label>
+                Approved CDN hosts{' '}
+                <span className="optional">Optional · exact hostnames, one per line</span>
+                <textarea
+                  data-focus
+                  name="cdn"
+                  rows={2}
+                  maxLength={8192}
+                  placeholder="cdn.provider.example"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  disabled={saving || isPreview}
+                />
+              </label>
+            </>
+          )}
           <label className="checkbox-label">
             <input data-focus name="http" type="checkbox" disabled={saving || isPreview} />
-            <span>Allow unencrypted HTTP for this source</span>
+            <span>
+              {kind === 'iptv-org'
+                ? 'Include unencrypted HTTP streams (many iptv-org streams use plain HTTP)'
+                : 'Allow unencrypted HTTP for this source'}
+            </span>
           </label>
-          <label className="checkbox-label">
-            <input data-focus name="lan" type="checkbox" disabled={saving || isPreview} />
-            <span>Allow private LAN addresses for this source</span>
-          </label>
+          {kind === 'm3u' && (
+            <label className="checkbox-label">
+              <input data-focus name="lan" type="checkbox" disabled={saving || isPreview} />
+              <span>Allow private LAN addresses for this source</span>
+            </label>
+          )}
           <p className="field-help">
-            Enable these only for providers and home-network devices you trust. Loopback, link-local
-            and metadata addresses are always blocked.
+            {kind === 'iptv-org'
+              ? 'iptv-org streams live on many public hosts, so this source may reach any public address over HTTPS, and over HTTP only if enabled. Loopback, private, link-local and metadata addresses stay blocked.'
+              : 'Enable these only for providers and home-network devices you trust. Loopback, link-local and metadata addresses are always blocked.'}
           </p>
           <button
             type="submit"

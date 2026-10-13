@@ -107,6 +107,17 @@ async fn query_countries(
     worker(&state, move |c| c.database.countries(source_id.as_deref())).await
 }
 #[tauri::command]
+async fn iptv_org_catalog(
+    state: State<'_, AppState>,
+    api_base: Option<String>,
+    playlist_base: Option<String>,
+) -> Reply<iptv_core::iptv_org::Catalog> {
+    worker(&state, move |c| {
+        c.iptv_org_catalog(api_base.as_deref(), playlist_base.as_deref())
+    })
+    .await
+}
+#[tauri::command]
 async fn locate_channel(
     state: State<'_, AppState>,
     query: ChannelQuery,
@@ -290,6 +301,7 @@ pub fn run() {
             query_channels,
             query_groups,
             query_countries,
+            iptv_org_catalog,
             locate_channel,
             exit_app,
             query_guide,

@@ -10,6 +10,7 @@ pub const MAX_PROGRAMMES: usize = 2_000_000;
 pub const MAX_LINE: usize = 64 * 1024;
 pub const MAX_M3U_BYTES: u64 = 128 * 1024 * 1024;
 pub const MAX_XML_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_JSON_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_MANIFEST_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct LimitedRead<R> {

@@ -17,6 +17,12 @@ const CHANNEL_FILTER: &str = "FROM channel_entries c JOIN sources s ON s.id=c.so
             AND (?4 IS NULL OR EXISTS(SELECT 1 FROM channel_groups g WHERE g.generation=c.generation AND g.channel_id=c.id AND g.name=?4))
             AND (?5=0 OR EXISTS(SELECT 1 FROM favorites f WHERE f.channel_id=c.id)) AND (?6 IS NULL OR EXISTS(SELECT 1 FROM channel_countries cc WHERE cc.generation=c.generation AND cc.channel_id=c.id AND cc.code=?6))";
 
+/// Ordered schema migrations; each ends by setting `user_version` to its position.
+const MIGRATIONS: [&str; 2] = [
+    include_str!("../migrations/001_initial.sql"),
+    include_str!("../migrations/002_source_kind.sql"),
+];
+
 #[derive(Clone)]
 pub struct Database {
     path: PathBuf,
@@ -30,14 +36,18 @@ impl Database {
         let mut connection = db.connect()?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 0 {
-            let tx = connection.transaction()?;
-            tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-            tx.commit()?;
-        } else if version != 1 {
-            return Err(Error::Invalid(
+        let applied = usize::try_from(version)
+            .ok()
+            .filter(|applied| *applied <= MIGRATIONS.len())
+            .ok_or(Error::Invalid(
                 "The database was created by an unsupported application version.",
-            ));
+            ))?;
+        if applied < MIGRATIONS.len() {
+            let tx = connection.transaction()?;
+            for migration in &MIGRATIONS[applied..] {
+                tx.execute_batch(migration)?;
+            }
+            tx.commit()?;
         }
         // Only called while the process holds the exclusive profile lock.
         connection.execute("DELETE FROM generations WHERE state='staging'", [])?;
@@ -66,8 +76,14 @@ impl Database {
         let plain = Zeroizing::new(serde_json::to_vec(input)?);
         let encrypted = vault.seal(&format!("source:{id}"), &plain)?;
         tx.execute(
-            "INSERT INTO sources(id,name,config,has_epg) VALUES(?1,?2,?3,?4)",
-            params![id, input.name.trim(), encrypted, !input.epg_urls.is_empty()],
+            "INSERT INTO sources(id,name,config,has_epg,kind) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                id,
+                input.name.trim(),
+                encrypted,
+                !input.epg_urls.is_empty(),
+                input.kind()
+            ],
         )?;
         tx.commit()?;
         Ok(id)
@@ -85,7 +101,7 @@ impl Database {
     }
     pub fn sources(&self) -> Result<Vec<Source>> {
         let connection = self.connect()?;
-        let mut statement = connection.prepare("SELECT s.id,s.name,s.updated_at,s.has_epg,(SELECT COUNT(*) FROM channel_entries c WHERE c.generation=s.active_generation) FROM sources s ORDER BY s.name COLLATE NOCASE,s.id")?;
+        let mut statement = connection.prepare("SELECT s.id,s.name,s.updated_at,s.has_epg,(SELECT COUNT(*) FROM channel_entries c WHERE c.generation=s.active_generation),s.kind FROM sources s ORDER BY s.name COLLATE NOCASE,s.id")?;
         let rows = statement.query_map([], |r| {
             Ok(Source {
                 id: r.get(0)?,
@@ -93,6 +109,7 @@ impl Database {
                 updated_at: r.get(2)?,
                 has_epg: r.get(3)?,
                 channels: r.get(4)?,
+                kind: r.get(5)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()

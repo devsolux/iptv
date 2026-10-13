@@ -20,8 +20,9 @@ class CatalogueTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.executescript((CORE / "migrations/001_initial.sql").read_text())
-        self.db.execute("INSERT INTO sources VALUES('source','My source',X'0102',NULL,NULL,1)")
+        for name in ["001_initial.sql", "002_source_kind.sql"]:
+            self.db.executescript((CORE / "migrations" / name).read_text())
+        self.db.execute("INSERT INTO sources(id,name,config,active_generation,updated_at,has_epg) VALUES('source','My source',X'0102',NULL,NULL,1)")
         self.generation("old")
         self.channel("old", "stable", "News", "news.id")
         self.db.execute("UPDATE sources SET active_generation='old'")
@@ -118,10 +119,24 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT COUNT(*) " + CHANNEL_FILTER, ("%", r"%\%%", None, None, False, None)).fetchone()[0], 0)
 
     def test_sqlite_schema_is_strict_and_valid(self):
-        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 2)
         self.assertEqual(self.db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("INSERT INTO sources(id,name,config) VALUES('bad','Bad','unencrypted text')")
+        self.assertEqual(self.db.execute("SELECT kind FROM sources").fetchone()[0], "m3u")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("INSERT INTO sources(id,name,config,kind) VALUES('k','K',X'0102','other')")
+
+    def test_version_one_profiles_migrate_in_place(self):
+        db = sqlite3.connect(":memory:")
+        db.executescript((CORE / "migrations/001_initial.sql").read_text())
+        db.execute("INSERT INTO sources(id,name,config) VALUES('legacy','Legacy',X'0102')")
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+        db.executescript((CORE / "migrations/002_source_kind.sql").read_text())
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(db.execute("SELECT kind FROM sources WHERE id='legacy'").fetchone()[0], "m3u")
+        self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        db.close()
 
 if __name__ == "__main__":
     unittest.main()

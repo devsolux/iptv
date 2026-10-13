@@ -45,3 +45,14 @@ test('browser preview cannot mutate source credentials or start native playback'
   await expect(page.getByText('Development preview', { exact: false }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Add source/i })).toBeDisabled();
 });
+test('browser preview exposes the iptv-org source type without enabling native imports', async ({
+  page,
+}) => {
+  await page.goto('/#/sources');
+  await page.getByRole('radio', { name: 'iptv-org public catalogue' }).check();
+  await expect(page.getByLabel('Selection method')).toBeVisible();
+  await expect(page.getByLabel('Countries', { exact: false }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /Add source/i })).toBeDisabled();
+  await page.getByRole('radio', { name: 'Own M3U playlist' }).check();
+  await expect(page.getByLabel('M3U playlist URL')).toBeVisible();
+});

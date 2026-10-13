@@ -1284,3 +1284,93 @@ select {
     scroll-behavior: auto !important;
   }
 }
+
+/* iptv-org source form */
+.source-type {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.source-type label {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  padding: 12px 13px;
+  border: 1px solid #344962;
+  border-radius: 9px;
+  background: #0f1a2b;
+  color: #b8cae3;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+.source-type label:has(input:checked) {
+  border-color: #7ca8f4;
+  background: #1b314e;
+  color: #dbe7fa;
+}
+.source-form .source-type input {
+  appearance: auto;
+  accent-color: #7ca8f4;
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  flex: none;
+}
+.code-field {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 9px;
+}
+.source-form .code-field input {
+  margin-top: 0;
+  flex: 1;
+  min-width: 0;
+}
+.source-form select.full,
+.code-field select {
+  border: 1px solid #344962;
+  border-radius: 7px;
+  background: #0f1a2b;
+  color: #d3e1f5;
+  padding: 12px;
+  font-size: 0.8rem;
+  min-height: 45px;
+  max-width: none;
+}
+.source-form select.full {
+  width: 100%;
+  display: block;
+  margin-top: 9px;
+}
+.code-field select {
+  flex: none;
+  width: 150px;
+}
+.resolved {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.65rem;
+  line-height: 1.5;
+  color: #7c97ba;
+  overflow-wrap: anywhere;
+}
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px 16px;
+  margin-bottom: 18px;
+}
+.option-grid .checkbox-label {
+  margin-bottom: 0;
+}

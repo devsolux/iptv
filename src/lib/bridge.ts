@@ -5,6 +5,7 @@ import {
   channelPageSchema,
   type GuideQuery,
   guideSchema,
+  iptvOrgCatalogSchema,
   jobSchema,
   playbackSchema,
   publicErrorSchema,
@@ -79,6 +80,8 @@ export const api = {
       z.object({ index: z.number().int().nonnegative().nullable(), revision: z.number().int() }),
     ),
   sources: () => call('list_sources', {}, z.array(sourceSchema).max(32)),
+  iptvOrgCatalog: (apiBase: string | null, playlistBase: string | null) =>
+    call('iptv_org_catalog', { apiBase, playlistBase }, iptvOrgCatalogSchema),
   addSource: (input: SourceInput) => call('save_source', { input }, z.string().uuid()),
   removeSource: (sourceId: string) => call('remove_source', { sourceId }, empty),
   refreshSource: (sourceId: string) => call('refresh_source', { sourceId }, z.string().uuid()),

@@ -18,6 +18,8 @@ The main bundled window receives only core/default and the enumerated applicatio
 
 HTTPS certificate verification remains enabled. Cleartext and private-network access require explicit per-source consent. Exact authorized source/CDN hosts constrain requests, including redirects. DNS resolutions are checked and pinned for the connection; loopback, metadata/link-local and transition-address bypasses are rejected. Only the explicitly supported provider Referer and User-Agent headers are carried through. User-info URLs, unsafe schemes and arbitrary header injection are not accepted.
 
+iptv-org sources are aggregators whose streams live on arbitrary public hosts, so the exact host allowlist does not apply to them; every other control does: HTTPS unless cleartext is consented per source, no user-info URLs, DNS pinning, loopback/private/link-local/metadata/transition-address rejection, redirect re-checks, limits and deadlines. Private-network access and CDN host lists are rejected for these sources, their playlist and API bases must be plain HTTPS origins, and the metadata fetch behind the source form is confined to the API host. Dataset JSON is streamed under byte and item limits, unknown fields are ignored, and a malformed snapshot is rejected instead of activated.
+
 Imports and relay reads use limits and deadlines. Cancellation is cooperative: a blocking system DNS call can only return when the operating system resolver finishes. Do not interpret cancellation as instantaneous forced interruption of every external system call.
 
 ## Local playback transport

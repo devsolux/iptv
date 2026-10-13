@@ -20,6 +20,9 @@ pub struct NetworkPolicy {
     pub allow_http: bool,
     pub allow_lan: bool,
     hosts: HashSet<String>,
+    /// Aggregator sources: any public host passes the host check; IP, scheme, redirect
+    /// and DNS checks still apply to every request.
+    open_hosts: bool,
 }
 impl NetworkPolicy {
     pub fn new(initial: &str, source: &SourceInput) -> Result<Self> {
@@ -50,6 +53,20 @@ impl NetworkPolicy {
             allow_http: source.allow_http,
             allow_lan: source.allow_lan,
             hosts,
+            open_hosts: source.is_aggregator(),
+        };
+        policy.check_url(&url)?;
+        Ok(policy)
+    }
+    /// Read-only HTTPS access to exactly one public host: catalogue metadata, never streams.
+    pub fn public(initial: &str) -> Result<Self> {
+        let url = Url::parse(initial).map_err(|_| Error::Invalid("A source URL is invalid."))?;
+        let host = url.host_str().ok_or(Error::Policy)?.to_ascii_lowercase();
+        let policy = Self {
+            allow_http: false,
+            allow_lan: false,
+            hosts: HashSet::from([host]),
+            open_hosts: false,
         };
         policy.check_url(&url)?;
         Ok(policy)
@@ -67,7 +84,7 @@ impl NetworkPolicy {
             ));
         }
         let host = url.host_str().ok_or(Error::Policy)?.to_ascii_lowercase();
-        if !self.hosts.contains(&host) {
+        if !self.open_hosts && !self.hosts.contains(&host) {
             return Err(Error::Policy);
         }
         if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
@@ -199,7 +216,18 @@ pub fn validate_source(source: &SourceInput) -> Result<()> {
             "The default country must be a two-letter country code.",
         ));
     }
-    NetworkPolicy::new(&source.playlist_url, source)?;
+    if let Some(config) = &source.iptv_org {
+        config.validate()?;
+        if source.allow_lan || !source.cdn_hosts.is_empty() {
+            return Err(Error::Invalid(
+                "iptv-org sources use public hosts only; LAN access and CDN lists do not apply.",
+            ));
+        }
+        let base = crate::iptv_org::playlist_base(source)?;
+        NetworkPolicy::new(base.as_str(), source)?;
+    } else {
+        NetworkPolicy::new(&source.playlist_url, source)?;
+    }
     for url in &source.epg_urls {
         NetworkPolicy::new(url, source)?;
     }

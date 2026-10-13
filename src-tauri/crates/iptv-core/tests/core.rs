@@ -39,6 +39,7 @@ fn source() -> SourceInput {
         allow_lan: false,
         cdn_hosts: vec![],
         country_code: "DE".into(),
+        iptv_org: None,
     }
 }
 fn query() -> ChannelQuery {
@@ -339,4 +340,663 @@ fn xmltv_rejects_non_utf8_text_and_attributes() {
     ] {
         assert!(xmltv::parse(Cursor::new(xml), |_| Ok(())).is_err());
     }
+}
+
+// ------------------------------------------------------------------------------------------
+// iptv-org: official playlist URLs, dataset ingestion, the selection matrix and the serializer.
+// ------------------------------------------------------------------------------------------
+use iptv_core::iptv_org::{self, Config, CountryMode, Method, OfficialPlaylist, PlaylistKind};
+
+fn org_dataset() -> iptv_org::Dataset {
+    iptv_org::load(|file| {
+        let text = match file {
+            "channels.json" => r#"[
+ {"id":"CanNews.ca","name":"Can News","alt_names":[],"network":null,"owners":[],"country":"CA","categories":["news"],"is_nsfw":false,"launched":null,"closed":null,"replaced_by":null,"website":null},
+ {"id":"DeNews.de","name":"DE News","country":"DE","categories":["news","general"],"is_nsfw":false,"closed":null},
+ {"id":"Regional.de","name":"Regional","country":"DE","categories":["general"],"is_nsfw":false,"closed":null},
+ {"id":"Nrw.de","name":"NRW","country":"DE","categories":null,"is_nsfw":false,"closed":null},
+ {"id":"Nyc.us","name":"NYC","country":"US","categories":["news"],"is_nsfw":false,"closed":null},
+ {"id":"Multi.de","name":"Multi","country":"DE","categories":["general"],"is_nsfw":false,"closed":null},
+ {"id":"Blocked.de","name":"Blocked","country":"DE","categories":["news"],"is_nsfw":false,"closed":null},
+ {"id":"Adult.de","name":"Adult","country":"DE","categories":["news"],"is_nsfw":true,"closed":null},
+ {"id":"Closed.de","name":"Closed","country":"DE","categories":["news"],"is_nsfw":false,"closed":"2020-01-01"},
+ {"id":"Geo.de","name":"Geo","country":"DE","categories":["news"],"is_nsfw":false,"closed":null},
+ {"id":"Other.de","name":"Other","country":"DE","categories":["news"],"is_nsfw":false,"closed":null},
+ {"id":"Brit.uk","name":"Brit","country":"UK","categories":["news"],"is_nsfw":false,"closed":null},
+ {"id":"World.us","name":"World","country":"US","categories":["news"],"is_nsfw":false,"closed":null}
+]"#,
+            "feeds.json" => r#"[
+ {"channel":"CanNews.ca","id":"HD","name":"HD","alt_names":[],"is_main":true,"broadcast_area":["c/DE"],"timezones":[],"languages":["deu"],"format":"1080p"},
+ {"channel":"DeNews.de","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Regional.de","id":"EU","name":"Europe","is_main":false,"broadcast_area":["r/EU"],"languages":["deu"]},
+ {"channel":"Nrw.de","id":"NW","name":"NW","is_main":true,"broadcast_area":["s/DE-NW"],"languages":["deu"]},
+ {"channel":"Nyc.us","id":"NY","name":"New York","is_main":false,"broadcast_area":["ct/USNYC"],"languages":["eng"]},
+ {"channel":"Multi.de","id":"A","name":"A","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Multi.de","id":"B","name":"B","is_main":false,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Blocked.de","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Adult.de","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Closed.de","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Geo.de","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Other.de","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/DE"],"languages":["deu"]},
+ {"channel":"Brit.uk","id":"SD","name":"SD","is_main":true,"broadcast_area":["c/UK"],"languages":["eng"]},
+ {"channel":"World.us","id":"WW","name":"World","is_main":true,"broadcast_area":["r/WW"],"languages":["eng"]}
+]"#,
+            "streams.json" => r#"[
+ {"channel":"CanNews.ca","feed":"HD","title":"Can News (720p)","url":"https://cdn-a.invalid/can720.m3u8","referrer":null,"user_agent":null,"quality":"720p","labels":[]},
+ {"channel":"CanNews.ca","feed":"HD","title":"Can News (1080p)","url":"https://cdn-b.invalid/can1080.m3u8","referrer":"https://can.invalid/","user_agent":"Fixture/1.0","quality":"1080p","labels":[]},
+ {"channel":"CanNews.ca","feed":"HD","title":"duplicate","url":"https://cdn-b.invalid/can1080.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":null},
+ {"channel":"DeNews.de","feed":"SD","title":"DE News","url":"https://shared.invalid/live.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Other.de","feed":"SD","title":"Other","url":"https://shared.invalid/live.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Regional.de","feed":"EU","title":"Regional","url":"https://cdn.invalid/regional.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Nrw.de","feed":"NW","title":"NRW","url":"https://cdn.invalid/nrw.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Nyc.us","feed":"NY","title":"NYC","url":"https://cdn.invalid/nyc.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Multi.de","feed":null,"title":"Multi","url":"https://cdn.invalid/multi.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Blocked.de","feed":"SD","title":"Blocked","url":"https://cdn.invalid/blocked.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Adult.de","feed":"SD","title":"Adult","url":"https://cdn.invalid/adult.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Closed.de","feed":"SD","title":"Closed","url":"https://cdn.invalid/closed.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"Geo.de","feed":"SD","title":"Geo","url":"https://cdn.invalid/geo.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":["Geo-blocked","Not 24/7"]},
+ {"channel":"Brit.uk","feed":"SD","title":"Brit","url":"https://cdn.invalid/brit.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"World.us","feed":"WW","title":"World","url":"https://cdn.invalid/world.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":null,"feed":null,"title":"Orphan","url":"https://cdn.invalid/orphan.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"DeNews.de","feed":"SD","title":"rtmp","url":"rtmp://cdn.invalid/live","referrer":null,"user_agent":null,"quality":null,"labels":[]},
+ {"channel":"DeNews.de","feed":"SD","title":"plain","url":"http://cdn.invalid/plain.m3u8","referrer":null,"user_agent":null,"quality":null,"labels":[]}
+]"#,
+            "logos.json" => r#"[
+ {"channel":"CanNews.ca","feed":null,"in_use":true,"tags":[],"width":600,"height":300,"format":"PNG","url":"https://img.invalid/can-generic.png"},
+ {"channel":"CanNews.ca","feed":"HD","in_use":true,"tags":[],"width":100,"height":100,"format":"PNG","url":"https://img.invalid/can-hd.png"},
+ {"channel":"CanNews.ca","feed":"HD","in_use":true,"tags":[],"width":9000,"height":9000,"format":"PNG","url":"http://img.invalid/insecure.png"},
+ {"channel":"DeNews.de","feed":null,"in_use":false,"tags":[],"width":600,"height":300,"format":"PNG","url":"https://img.invalid/de-old.png"}
+]"#,
+            "categories.json" => r#"[{"id":"news","name":"News","description":""},{"id":"general","name":"General","description":""}]"#,
+            "countries.json" => r#"[{"code":"DE","name":"Germany","languages":["deu"],"flag":"🇩🇪"},{"code":"US","name":"United States","languages":["eng"],"flag":"🇺🇸"},{"code":"UK","name":"United Kingdom","languages":["eng"],"flag":"🇬🇧"},{"code":"CA","name":"Canada","languages":["eng","fra"],"flag":"🇨🇦"},{"code":"FR","name":"France","languages":["fra"],"flag":"🇫🇷"}]"#,
+            "regions.json" => r#"[{"code":"EU","name":"European Union","countries":["DE","FR"]},{"code":"WW","name":"Worldwide","countries":["DE","US"]}]"#,
+            "subdivisions.json" => r#"[{"country":"DE","code":"DE-NW","name":"Nordrhein-Westfalen","parent":null}]"#,
+            "cities.json" => r#"[{"country":"US","subdivision":"US-NY","code":"USNYC","name":"New York","wikidata_id":"Q60"}]"#,
+            "blocklist.json" => r#"[{"channel":"Blocked.de","reason":"dmca","ref":"https://example.invalid"}]"#,
+            _ => "[]",
+        };
+        Ok(Box::new(Cursor::new(text.to_owned())))
+    })
+    .unwrap()
+}
+fn org_config(countries: &[&str], mode: CountryMode) -> Config {
+    Config {
+        api_base: String::new(),
+        method: Method::Catalogue,
+        playlists: vec![],
+        geography: iptv_org::Geography {
+            countries: countries.iter().map(|c| (*c).to_owned()).collect(),
+            mode,
+            ..Default::default()
+        },
+        filters: Default::default(),
+        playlist: Default::default(),
+        cache: Default::default(),
+    }
+}
+fn org_source(config: Config) -> SourceInput {
+    SourceInput {
+        name: "iptv-org".into(),
+        playlist_url: String::new(),
+        epg_urls: vec![],
+        allow_http: false,
+        allow_lan: false,
+        cdn_hosts: vec![],
+        country_code: String::new(),
+        iptv_org: Some(config),
+    }
+}
+fn ids(entries: &[iptv_org::Entry]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|e| format!("{}|{}", e.country, e.tvg_id))
+        .collect()
+}
+fn https_only(url: &Url) -> bool {
+    url.scheme() == "https"
+}
+const TODAY: &str = "2026-10-13";
+
+#[test]
+fn official_playlist_urls_follow_the_published_catalogue() {
+    let base = Url::parse(iptv_org::DEFAULT_PLAYLIST_BASE).unwrap();
+    let aliases = iptv_org::Geography::default().country_aliases;
+    let url = |kind, code: &str| {
+        iptv_org::official_url(
+            &base,
+            &OfficialPlaylist {
+                kind,
+                code: code.into(),
+            },
+            &aliases,
+        )
+    };
+    let root = "https://iptv-org.github.io/iptv";
+    assert_eq!(
+        url(PlaylistKind::Country, "gb").unwrap(),
+        (format!("{root}/countries/uk.m3u"), Some("UK".to_owned()))
+    );
+    assert_eq!(
+        url(PlaylistKind::Country, "XK").unwrap().0,
+        format!("{root}/countries/xk.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::Country, "int").unwrap(),
+        (format!("{root}/countries/int.m3u"), None)
+    );
+    assert_eq!(
+        url(PlaylistKind::Category, "News").unwrap().0,
+        format!("{root}/categories/news.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::Language, "DEU").unwrap().0,
+        format!("{root}/languages/deu.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::Region, "EUR").unwrap().0,
+        format!("{root}/regions/eur.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::Subdivision, "GB-WLS").unwrap().0,
+        format!("{root}/subdivisions/gb-wls.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::City, "USNYC").unwrap().0,
+        format!("{root}/cities/usnyc.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::Source, "us_pluto").unwrap().0,
+        format!("{root}/sources/us_pluto.m3u")
+    );
+    assert_eq!(
+        url(PlaylistKind::Master, "").unwrap().0,
+        format!("{root}/index.m3u")
+    );
+    for (kind, code) in [
+        (PlaylistKind::Country, "DEU"),
+        (PlaylistKind::Category, "bad slug"),
+        (PlaylistKind::Language, "de"),
+        (PlaylistKind::Source, "../x"),
+        (PlaylistKind::Master, "x"),
+        (PlaylistKind::Subdivision, "DENW"),
+    ] {
+        assert!(url(kind, code).is_err(), "{code}");
+    }
+    // An official playlist may legitimately be empty; a user playlist may not.
+    assert!(m3u::parse_with(Cursor::new("#EXTM3U\n"), true, |_| Ok(())).is_ok());
+    assert!(m3u::parse(Cursor::new("#EXTM3U\n"), |_| Ok(())).is_err());
+}
+#[test]
+fn iptv_org_json_arrays_stream_items_and_enforce_limits() {
+    let text = r#"[{"id":"a","name":"A","country":null,"categories":null},{"id":"b","name":"B","country":"DE"}]"#;
+    let mut seen = vec![];
+    let count = iptv_org::read_array::<iptv_org::Channel>(Cursor::new(text), 10, |c| {
+        seen.push(format!("{}:{}", c.id, c.country));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(seen, vec!["a:".to_owned(), "b:DE".to_owned()]);
+    assert!(matches!(
+        iptv_org::read_array::<iptv_org::Channel>(Cursor::new(text), 1, |_| Ok(())),
+        Err(iptv_core::error::Error::Limit)
+    ));
+    assert!(matches!(
+        iptv_org::read_array::<iptv_org::Channel>(Cursor::new(text), 10, |_| Err(
+            iptv_core::error::Error::Cancelled
+        )),
+        Err(iptv_core::error::Error::Cancelled)
+    ));
+    for malformed in [r#"[{"id":"a"}]"#, "{}", "[{", "[] trailing"] {
+        assert!(
+            iptv_org::read_array::<iptv_org::Channel>(Cursor::new(malformed), 10, |_| Ok(()))
+                .is_err(),
+            "{malformed}"
+        );
+    }
+}
+#[test]
+fn iptv_org_origin_and_coverage_modes_follow_the_documented_matrix() {
+    let data = org_dataset();
+    // Origin: the channel's own country decides; coverage and unresolved feeds are irrelevant.
+    let origin = iptv_org::select(
+        &data,
+        &org_config(&["DE"], CountryMode::Origin),
+        TODAY,
+        https_only,
+    )
+    .unwrap();
+    let origin_ids = ids(&origin);
+    assert!(!origin_ids.iter().any(|id| id.contains("CanNews.ca")));
+    for included in ["DE|DeNews.de@SD", "DE|Multi.de", "DE|Regional.de@EU"] {
+        assert!(origin_ids.contains(&included.to_owned()), "{included}");
+    }
+    // Strict coverage: explicit c/, s/ and ct/ tokens include; r/EU, r/WW and ambiguous feeds do not.
+    let strict = iptv_org::select(
+        &data,
+        &org_config(&["DE", "US"], CountryMode::CoverageStrict),
+        TODAY,
+        https_only,
+    )
+    .unwrap();
+    let strict_ids = ids(&strict);
+    for included in [
+        "DE|CanNews.ca@HD",
+        "DE|Nrw.de@NW",
+        "US|Nyc.us@NY",
+        "DE|Geo.de@SD",
+    ] {
+        assert!(strict_ids.contains(&included.to_owned()), "{included}");
+    }
+    for excluded in [
+        "Regional.de",
+        "Multi.de",
+        "World.us",
+        "Blocked.de",
+        "Adult.de",
+        "Closed.de",
+        "Orphan",
+        "Brit.uk",
+    ] {
+        assert!(
+            !strict_ids.iter().any(|id| id.contains(excluded)),
+            "{excluded}"
+        );
+    }
+    // Alternatives: best reported quality first, duplicates removed, both kept as variants.
+    let can: Vec<&iptv_org::Entry> = strict
+        .iter()
+        .filter(|e| e.tvg_id == "CanNews.ca@HD")
+        .collect();
+    assert_eq!(can.len(), 2);
+    assert_eq!(can[0].url, "https://cdn-b.invalid/can1080.m3u8");
+    assert_eq!(can[0].referrer.as_deref(), Some("https://can.invalid/"));
+    assert_eq!(can[0].user_agent.as_deref(), Some("Fixture/1.0"));
+    assert_eq!(can[0].logo, "https://img.invalid/can-hd.png");
+    assert_eq!(can[0].group, "Germany / News");
+    assert_eq!(can[0].name, "Can News");
+    assert_eq!(can[1].name, "Can News");
+    // The same URL under two distinct channels stays two entries; rejected schemes vanish.
+    assert_eq!(
+        strict
+            .iter()
+            .filter(|e| e.url == "https://shared.invalid/live.m3u8")
+            .count(),
+        2
+    );
+    assert!(strict.iter().all(|e| e.url.starts_with("https://")));
+    // Regions: r/EU counts only in the regional mode and only for member countries.
+    let regional = iptv_org::select(
+        &data,
+        &org_config(&["DE", "US"], CountryMode::CoverageWithRegions),
+        TODAY,
+        https_only,
+    )
+    .unwrap();
+    let regional_ids = ids(&regional);
+    assert!(regional_ids.contains(&"DE|Regional.de@EU".to_owned()));
+    assert!(!regional_ids.contains(&"US|Regional.de@EU".to_owned()));
+    assert!(!regional_ids.iter().any(|id| id.contains("World.us")));
+    let regional_entry = regional
+        .iter()
+        .find(|e| e.tvg_id == "Regional.de@EU")
+        .unwrap();
+    assert_eq!(regional_entry.name, "Regional (Europe)");
+    assert_eq!(regional_entry.group, "Germany / General");
+    // Worldwide feeds join every requested country only when explicitly enabled.
+    let mut international = org_config(&["DE", "US"], CountryMode::CoverageStrict);
+    international.geography.include_international = true;
+    let world = ids(&iptv_org::select(&data, &international, TODAY, https_only).unwrap());
+    assert!(world.contains(&"DE|World.us@WW".to_owned()));
+    assert!(world.contains(&"US|World.us@WW".to_owned()));
+}
+#[test]
+fn iptv_org_filters_aliases_and_playlist_options_are_honoured() {
+    let data = org_dataset();
+    // GB is accepted and canonicalized to the published UK code; unknown countries are rejected.
+    let uk = iptv_org::select(
+        &data,
+        &org_config(&["gb"], CountryMode::CoverageStrict),
+        TODAY,
+        https_only,
+    )
+    .unwrap();
+    assert_eq!(ids(&uk), vec!["UK|Brit.uk@SD".to_owned()]);
+    assert_eq!(uk[0].group, "United Kingdom / News");
+    assert!(
+        iptv_org::select(
+            &data,
+            &org_config(&["ZZ"], CountryMode::CoverageStrict),
+            TODAY,
+            https_only
+        )
+        .is_err()
+    );
+    let mut config = org_config(&["DE"], CountryMode::CoverageStrict);
+    config.filters.exclude_blocked = false;
+    config.filters.exclude_nsfw = false;
+    config.filters.exclude_closed = false;
+    config.filters.exclude_geo_blocked_label = true;
+    config.filters.categories = vec!["news".into()];
+    config.filters.languages = vec!["deu".into()];
+    config.playlist.include_every_alternative_stream = false;
+    config.playlist.group_by = vec![iptv_org::GroupBy::Category];
+    let selected = iptv_org::select(&data, &config, TODAY, https_only).unwrap();
+    let selected_ids = ids(&selected);
+    for included in ["DE|Blocked.de@SD", "DE|Adult.de@SD", "DE|Closed.de@SD"] {
+        assert!(selected_ids.contains(&included.to_owned()), "{included}");
+    }
+    for excluded in ["Geo.de", "Nrw.de", "Multi.de", "Nyc.us"] {
+        assert!(
+            !selected_ids.iter().any(|id| id.contains(excluded)),
+            "{excluded}"
+        );
+    }
+    assert_eq!(
+        selected
+            .iter()
+            .filter(|e| e.tvg_id == "CanNews.ca@HD")
+            .count(),
+        1
+    );
+    assert!(selected.iter().all(|e| e.group == "News"));
+    // The network policy decides which schemes are selected at all.
+    let mut plain = org_config(&["DE"], CountryMode::CoverageStrict);
+    plain.filters.exclude_not247_label = true;
+    let any_scheme = iptv_org::select(&data, &plain, TODAY, |_| true).unwrap();
+    assert!(
+        any_scheme
+            .iter()
+            .any(|e| e.url == "http://cdn.invalid/plain.m3u8")
+    );
+    assert!(!any_scheme.iter().any(|e| e.url.starts_with("rtmp://")));
+    assert!(!any_scheme.iter().any(|e| e.tvg_id == "Geo.de@SD"));
+    // Configuration validation mirrors the contract.
+    assert!(
+        org_config(&["DE"], CountryMode::CoverageStrict)
+            .validate()
+            .is_ok()
+    );
+    assert!(
+        org_config(&[], CountryMode::CoverageStrict)
+            .validate()
+            .is_err()
+    );
+    assert!(
+        org_config(&["DEU"], CountryMode::CoverageStrict)
+            .validate()
+            .is_err()
+    );
+    let mut bad = org_config(&["DE"], CountryMode::CoverageStrict);
+    bad.filters.languages = vec!["de".into()];
+    assert!(bad.validate().is_err());
+    let mut hours = org_config(&["DE"], CountryMode::CoverageStrict);
+    hours.cache.metadata_refresh_hours = 0;
+    assert!(hours.validate().is_err());
+    let mut official = org_config(&[], CountryMode::CoverageStrict);
+    official.method = Method::Playlist;
+    assert!(official.validate().is_err());
+    official.playlists = vec![OfficialPlaylist {
+        kind: PlaylistKind::Country,
+        code: "GB".into(),
+    }];
+    assert!(official.validate().is_ok());
+}
+#[test]
+fn iptv_org_serializer_output_is_a_valid_catalogue_for_the_playlist_importer() {
+    let data = org_dataset();
+    let config = org_config(&["DE"], CountryMode::CoverageStrict);
+    let entries = iptv_org::select(&data, &config, TODAY, https_only).unwrap();
+    let guide = "https://guide.invalid/epg.xml".to_owned();
+    let text = iptv_org::serialize(&entries, std::slice::from_ref(&guide), true);
+    assert!(text.starts_with("#EXTM3U x-tvg-url=\"https://guide.invalid/epg.xml\"\n"));
+    assert!(text.contains(
+        "#EXTINF:-1 tvg-id=\"CanNews.ca@HD\" tvg-name=\"Can News\" tvg-logo=\"https://img.invalid/can-hd.png\" tvg-country=\"DE\" group-title=\"Germany / News\",Can News\n#EXTVLCOPT:http-referrer=https://can.invalid/\n#EXTVLCOPT:http-user-agent=Fixture/1.0\nhttps://cdn-b.invalid/can1080.m3u8\n"
+    ));
+    let mut parsed = vec![];
+    let metadata = m3u::parse(Cursor::new(text.clone()), |channel| {
+        parsed.push(channel);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(metadata.count, entries.len());
+    assert_eq!(metadata.suggested_epg_urls, vec![guide]);
+    let can = parsed
+        .iter()
+        .find(|c| c.stream.url == "https://cdn-b.invalid/can1080.m3u8")
+        .unwrap();
+    assert_eq!(can.tvg_id, "CanNews.ca@HD");
+    assert_eq!(can.country, "DE");
+    assert_eq!(can.groups, vec!["Germany / News".to_owned()]);
+    assert_eq!(
+        can.stream.headers.get("referer").unwrap(),
+        "https://can.invalid/"
+    );
+    assert_eq!(can.stream.headers.get("user-agent").unwrap(), "Fixture/1.0");
+    // Without VLC options the playback hints are not emitted.
+    assert!(!iptv_org::serialize(&entries, &[], false).contains("#EXTVLCOPT"));
+    // Through the database: alternatives become variants of one logical channel.
+    let profile = Profile::new();
+    let db = Database::open(profile.0.join("catalogue.db")).unwrap();
+    let vault = Vault::new(profile.0.join("vault"));
+    vault
+        .unlock(Zeroizing::new("a long test passphrase".into()))
+        .unwrap();
+    let source = db.save_source(&org_source(config), &vault).unwrap();
+    let mut import = db.importer(&source, &vault).unwrap();
+    m3u::parse(Cursor::new(text), |channel| import.channel(channel)).unwrap();
+    import.activate().unwrap();
+    let page = db.channels(&query()).unwrap();
+    assert_eq!(
+        page.items.iter().filter(|c| c.name == "Can News").count(),
+        1
+    );
+    assert_eq!(
+        page.items
+            .iter()
+            .find(|c| c.name == "Can News")
+            .unwrap()
+            .variants,
+        2
+    );
+    assert!(db.countries(None).unwrap().iter().any(|c| c.code == "DE"));
+    assert_eq!(db.sources().unwrap()[0].kind, "iptv-org");
+    // Quotes in names and attributes serialize into something the parser accepts verbatim.
+    let quoted = iptv_org::Entry {
+        tvg_id: "Q.de".into(),
+        tvg_name: "Say \"hi\"".into(),
+        logo: String::new(),
+        group: "G".into(),
+        country: "DE".into(),
+        name: "Say \"hi\", now".into(),
+        url: "https://cdn.invalid/q.m3u8".into(),
+        referrer: None,
+        user_agent: None,
+    };
+    let mut names = vec![];
+    m3u::parse(
+        Cursor::new(iptv_org::serialize(&[quoted], &[], true)),
+        |c| {
+            names.push((c.name, c.tvg_name));
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        names,
+        vec![("Say \"hi\", now".to_owned(), "Say 'hi'".to_owned())]
+    );
+}
+#[test]
+fn aggregator_sources_allow_public_hosts_but_keep_every_address_protection() {
+    let source = org_source(org_config(&["DE"], CountryMode::CoverageStrict));
+    assert!(source.is_aggregator());
+    assert_eq!(source.kind(), "iptv-org");
+    assert_eq!(source.refresh_interval_seconds(), 24 * 3600);
+    let base = iptv_org::playlist_base(&source).unwrap();
+    assert_eq!(base.as_str(), "https://iptv-org.github.io/iptv");
+    let policy = NetworkPolicy::new(base.as_str(), &source).unwrap();
+    assert!(
+        policy
+            .check_url(&Url::parse("https://any-cdn.invalid/live.m3u8").unwrap())
+            .is_ok()
+    );
+    for rejected in [
+        "http://any-cdn.invalid/live.m3u8",
+        "https://user:pw@any-cdn.invalid/",
+        "https://127.0.0.1/",
+        "https://169.254.169.254/latest",
+        "https://10.0.0.1/",
+        "https://[::1]/",
+    ] {
+        assert!(
+            policy.check_url(&Url::parse(rejected).unwrap()).is_err(),
+            "{rejected}"
+        );
+    }
+    let public = NetworkPolicy::public("https://iptv-org.github.io/api").unwrap();
+    assert!(
+        public
+            .check_url(&Url::parse("https://other.invalid/").unwrap())
+            .is_err()
+    );
+    assert!(NetworkPolicy::public("http://iptv-org.github.io/api").is_err());
+    assert!(iptv_core::network::validate_source(&source).is_ok());
+    let mut lan = source.clone();
+    lan.allow_lan = true;
+    assert!(iptv_core::network::validate_source(&lan).is_err());
+    let mut cdn = source.clone();
+    cdn.cdn_hosts = vec!["cdn.invalid".into()];
+    assert!(iptv_core::network::validate_source(&cdn).is_err());
+    let mut mirror = source.clone();
+    mirror.playlist_url = "http://mirror.invalid/iptv".into();
+    assert!(iptv_core::network::validate_source(&mirror).is_err());
+    mirror.playlist_url = "https://mirror.invalid/iptv/".into();
+    assert!(iptv_core::network::validate_source(&mirror).is_ok());
+    // Own M3U sources keep the exact host allowlist and the six-hour refresh cadence.
+    let own = source_fixture();
+    assert!(!own.is_aggregator());
+    assert_eq!(own.kind(), "m3u");
+    assert_eq!(own.refresh_interval_seconds(), 6 * 3600);
+    let own_policy = NetworkPolicy::new(&own.playlist_url, &own).unwrap();
+    assert!(
+        own_policy
+            .check_url(&Url::parse("https://any-cdn.invalid/live.m3u8").unwrap())
+            .is_err()
+    );
+}
+fn source_fixture() -> SourceInput {
+    source()
+}
+#[test]
+fn version_one_profiles_migrate_and_record_the_source_kind() {
+    let profile = Profile::new();
+    let path = profile.0.join("catalogue.db");
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/001_initial.sql"))
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sources(id,name,config) VALUES('11111111-1111-4111-8111-111111111111','Legacy',X'0102')",
+                [],
+            )
+            .unwrap();
+    }
+    let db = Database::open(path.clone()).unwrap();
+    assert_eq!(db.sources().unwrap()[0].kind, "m3u");
+    let version: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    let vault = Vault::new(profile.0.join("vault"));
+    vault
+        .unlock(Zeroizing::new("a long test passphrase".into()))
+        .unwrap();
+    db.save_source(&source(), &vault).unwrap();
+    db.save_source(
+        &org_source(org_config(&["DE"], CountryMode::CoverageStrict)),
+        &vault,
+    )
+    .unwrap();
+    let mut kinds: Vec<String> = db.sources().unwrap().into_iter().map(|s| s.kind).collect();
+    kinds.sort();
+    assert_eq!(kinds, vec!["iptv-org", "m3u", "m3u"]);
+}
+/// Live check against the published iptv-org data; run explicitly with `--ignored`.
+#[test]
+#[ignore = "requires network access to iptv-org.github.io"]
+fn live_iptv_org_datasets_parse_select_and_official_playlists_import() {
+    let api = NetworkPolicy::public(iptv_org::DEFAULT_API_BASE).unwrap();
+    let fetch = |file: &str| -> iptv_core::error::Result<Box<dyn std::io::Read>> {
+        let response = api.get_blocking(
+            &format!("{}/{file}", iptv_org::DEFAULT_API_BASE),
+            &BTreeMap::new(),
+        )?;
+        Ok(Box::new(BufReader::new(response)))
+    };
+    let data = iptv_org::load(fetch).unwrap();
+    assert!(data.channels.len() > 1000 && data.feeds.len() > 1000 && data.streams.len() > 1000);
+    assert!(data.countries.iter().any(|c| c.code == "UK"));
+    let mut config = org_config(&["DE", "TR"], CountryMode::CoverageStrict);
+    config.filters.categories = vec!["news".into()];
+    let entries = iptv_org::select(&data, &config, TODAY, https_only).unwrap();
+    assert!(!entries.is_empty());
+    assert!(
+        entries
+            .iter()
+            .all(|e| e.country == "DE" || e.country == "TR")
+    );
+    let text = iptv_org::serialize(&entries, &[], true);
+    let mut count = 0;
+    m3u::parse(Cursor::new(text), |_| {
+        count += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count, entries.len());
+    let catalog =
+        iptv_org::load_catalog(fetch, &Url::parse(iptv_org::DEFAULT_PLAYLIST_BASE).unwrap())
+            .unwrap();
+    assert!(
+        catalog
+            .countries
+            .iter()
+            .any(|c| c.code == "UK" && c.playlist_candidate_url.ends_with("/countries/uk.m3u"))
+    );
+    assert!(catalog.categories.iter().any(|c| c.id == "news"));
+    assert!(catalog.languages.iter().any(|l| l.code == "tur"));
+    assert!(catalog.regions.iter().any(|r| r.code == "EUR"));
+    // Official playlists parse with the ordinary importer.
+    let source = org_source(config);
+    let base = iptv_org::playlist_base(&source).unwrap();
+    let policy = NetworkPolicy::new(base.as_str(), &source).unwrap();
+    let (url, country) = iptv_org::official_url(
+        &base,
+        &OfficialPlaylist {
+            kind: PlaylistKind::Country,
+            code: "gb".into(),
+        },
+        &source.iptv_org.as_ref().unwrap().geography.country_aliases,
+    )
+    .unwrap();
+    assert_eq!(country.as_deref(), Some("UK"));
+    let response = policy.get_blocking(&url, &BTreeMap::new()).unwrap();
+    let mut official = 0;
+    let meta = m3u::parse_with(BufReader::new(response), true, |_| {
+        official += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert!(official > 0 && meta.count == official);
+    eprintln!(
+        "live: {} channels, {} feeds, {} streams, {} selected DE/TR news entries, {} official UK entries",
+        data.channels.len(),
+        data.feeds.len(),
+        data.streams.len(),
+        entries.len(),
+        official
+    );
 }

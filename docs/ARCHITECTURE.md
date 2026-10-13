@@ -26,6 +26,15 @@ Each refresh writes a staging generation in short batch transactions, validates 
 
 Imports have bounded admission and one active import worker. Per-source coordination prevents duplicate refreshes and deletion races. Progress is throttled and queryable by job ID; events are an optimization, not the sole source of truth. Automatic due-source refresh runs only while the process is alive and unlocked. No closed-app Android scheduler is included.
 
+## iptv-org sources
+
+A source is either an own M3U playlist or an iptv-org selection. The kind is fixed when the source is created, and own playlists keep the exact pipeline above. iptv-org sources are handled by `iptv_org.rs` in one of two methods:
+
+- **Official playlists.** The configuration names published playlists (countries, categories, languages, regions, subdivisions, cities, upstream sources, master indexes). Each is validated into a URL under the playlist base, downloaded through the source policy and parsed by the ordinary M3U importer into the same staging generation. An empty official playlist is tolerated while the merged result must contain at least one channel. Country playlists supply the country code the official files omit; `GB` is canonicalized to the published `UK`, subdivision codes are never rewritten.
+- **Catalogue selection.** The ten JSON datasets (channels, feeds, streams, logos, categories, countries, regions, subdivisions, cities, blocklist) are streamed item by item under byte and item limits into lean records, joined locally and reduced by one deterministic policy: country mode (`origin`, `coverage-strict`, `coverage-with-regions`), the `c/`, `s/`, `ct/`, `r/` broadcast-area grammar with `r/WW` and `r/INT` as an explicit opt-in, blocklist, NSFW and closed-channel exclusions, optional `Geo-blocked` and `Not 24/7` label exclusions, category and language intersections (OR within a field, AND across fields), the single-feed fallback for streams without a feed, in-use HTTPS logo choice, quality-first ordering and per-(country, channel, feed, URL) deduplication. The result is serialized as extended M3U (`tvg-id="Channel@Feed"`, `tvg-name`, `tvg-logo`, `tvg-country`, `group-title`, `#EXTVLCOPT` hints) and parsed by the same importer as user playlists, so every limit and identity rule applies uniformly. Alternative streams of one channel feed share a name and become stream variants of one logical channel instead of duplicate cards.
+
+The selection emits only streams the source network policy accepts, so the catalogue never lists entries playback would refuse. `countries.json`, `categories.json`, `languages.json` and `regions.json` also back the source-form pickers through a read-only command that is confined to the API host and cached for a day. XMLTV remains a separate, user-configured feed; `guides.json` is a directory of guide sites and is not followed. Each import is one coherent snapshot activated atomically, a failed refresh keeps the last good generation, and iptv-org sources refresh on their configured cadence (24 hours by default) while own playlists keep six hours.
+
 ## Guide
 
 XMLTV uses a bounded streaming XML reader. External entities and DTDs are rejected. The initial implementation accepts UTF-8 and second-precision programme timestamps, requires an explicit stop and treats a missing offset as UTC. Store times in UTC; render in the viewer's local time. Retain the previous day and next fourteen days; guide requests cover at most six hours and forty channels.
@@ -46,4 +55,4 @@ Android uses one native Media3 instance with a full-screen dialog and remote con
 
 ## Explicitly deferred
 
-Conditional HTTP/ETag reuse, remote image downloading/cache, imported publisher JSON, local-file picking, source editing, mapping-editor UI, recording, DRM, cloud sync and closed-app scheduling are not implemented. These are not hidden background services. The application retains authorized source data locally but is not a live-stream availability monitoring service.
+Conditional HTTP/ETag reuse, remote image downloading/cache, local-file picking, source editing, mapping-editor UI, recording, DRM, cloud sync and closed-app scheduling are not implemented. These are not hidden background services. The application retains authorized source data locally but is not a live-stream availability monitoring service.

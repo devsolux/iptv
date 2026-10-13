@@ -6,6 +6,7 @@ fn main() {
             "lock",
             "exit_app",
             "query_countries",
+            "iptv_org_catalog",
             "locate_channel",
             "list_jobs",
             "list_sources",

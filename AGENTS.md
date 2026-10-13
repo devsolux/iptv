@@ -6,7 +6,7 @@ Guidance for AI coding agents (and people) changing this repository. Read it bef
 ## Project
 
 IPTV `1.0.0` (`com.devsolux.iptv`) is an Ionic React + Tauri 2 application for user-supplied M3U
-playlists and XMLTV guides, built for desktop and Android/Fire TV remotes. **Rust owns** ingestion,
+playlists, iptv-org selections and XMLTV guides, built for desktop and Android/Fire TV remotes. **Rust owns** ingestion,
 persistence, secrets, network policy and playback authorization. **The UI owns** presentation,
 routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives loopback relay URLs.
 
@@ -14,7 +14,7 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
 | --- | --- |
 | `src/` | React UI: `pages/`, `components/`, `hooks/` (focus, paging, player), `lib/` (bridge, contracts, pager), `store/` (Zustand UI state) |
 | `src-tauri/src/lib.rs` | Tauri commands, app state, lifecycle |
-| `src-tauri/crates/iptv-core/` | M3U/XMLTV parsers, SQLite generations (`db.rs`), vault, network policy, HLS/DASH relay |
+| `src-tauri/crates/iptv-core/` | M3U/XMLTV parsers, SQLite generations (`db.rs`), vault, network policy, HLS/DASH relay, iptv-org integration (`iptv_org.rs`) |
 | `src-tauri/plugins/player/` | Android Media3 player plugin (Kotlin) |
 | `scripts/` | `project.mjs` (verify/clean/doctor), `bootstrap.mjs` (dependency upgrades), `android-configure.mjs` |
 | `tests/` | `unit/` (Node), `e2e/` (Playwright), `sql/` and `tools/` (Python `unittest`) |
@@ -87,12 +87,24 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
     `role="toolbar"`. Back/Escape flows through `NavigationLifecycle` in `src/App.tsx`.
 12. **Preview data.** `src/lib/preview.ts` runs only when `import.meta.env.DEV && !isTauri()`. It is
     never a production fallback.
+13. **Two source kinds.** `SourceInput.iptv_org` is `None` for own M3U playlists, whose import path
+    (`Core::import_playlist`, `m3u::parse`) must keep its behaviour. iptv-org sources go through
+    `iptv_org.rs`: official playlist URLs are built only by `official_path`, catalogue selections run
+    through the single `select` policy and are serialized with `serialize` into M3U that the same
+    parser ingests. Keep `select` deterministic and covered by the matrix in `tests/core.rs`.
+14. **Aggregator network policy.** Only sources with `iptv_org` set get `open_hosts`; the IP, scheme,
+    redirect and DNS checks still apply, LAN access and CDN lists are rejected, and
+    `NetworkPolicy::public` (single host, HTTPS) is the only policy for the catalogue command.
+15. **Migrations.** `db::MIGRATIONS` is ordered; each file ends with `PRAGMA user_version = N`.
+    `tests/sql/test_catalogue.py` runs them all, so a new migration must also keep that suite green.
 
 ## Testing notes
 
 - `npm test` runs `tests/unit/*.test.ts` with Node type stripping: import sources with explicit `.ts`
   extensions and keep cross-file imports type-only or dependency-free.
-- Rust integration tests live in `src-tauri/crates/iptv-core/tests/core.rs`.
+- Rust integration tests live in `src-tauri/crates/iptv-core/tests/core.rs`, including the iptv-org
+  selection matrix (origin versus coverage, regions, subdivisions, cities, blocklist, labels,
+  aliases, deduplication) and the serializer round trip through the M3U parser and database.
 - E2E specs run against the `dev:web` preview, not the native app.
 - The Android plugin (`src-tauri/plugins/player/android`) only compiles through `make android-init`
   and `make build-android`; no local check covers it, so change it conservatively.

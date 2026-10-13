@@ -30,6 +30,28 @@ macOS on Apple Silicon (arm64), Node 24.21.0 (`.node-version` selects 26.11.1; `
 
 `verification-results.json` holds the same results in machine-readable form. The SQL suite executes the shipped migration and the actual query/matching SQL extracted from `db.rs`. The Rust suite exercises the parsers, vault, network policy, manifest rewriting and the database adapter. The browser specifications run against the read-only development preview, not the native application.
 
+## iptv-org integration (October 13, 2026)
+
+The same environment re-ran every suite after adding iptv-org sources (official playlists and the JSON catalogue selection) beside the unchanged own-M3U sources.
+
+| Check | Result |
+| --- | --- |
+| `node scripts/project.mjs verify` | Passed; the new `iptv_org_catalog` command is declared in `build.rs` and the permission file |
+| `npm run typecheck` | Passed |
+| Biome on `src` and `tests` | Passed, no diagnostics |
+| `npm run lint` (whole tree) | Still fails only on the vendored `public/flags/*.svg` diagnostics (pre-existing open item) |
+| `npm test` | 16 frontend tests passed (5 new: code lists, aliases, official playlist paths, form-to-contract building) |
+| `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| `cargo test --workspace --locked` | 21 Rust tests passed, 1 ignored (7 new: official URLs, streaming JSON limits, the origin/coverage/regions matrix, filters/aliases/options, serializer round trip through the M3U parser and database, aggregator network policy, version-1 database migration) |
+| `cargo test -p iptv-core --test core -- --ignored live_` | Passed once against the live `iptv-org.github.io` data: 31,562 channels, 45,155 feeds and 17,968 streams parsed; 28 DE/TR news entries selected, serialized and re-parsed; 304 entries of `countries/uk.m3u` imported through the ordinary parser. Needs network; not part of `make check` |
+| `python3 -m unittest discover -s tests/sql` | 12 SQLite invariant tests passed (migration 002 applied; version-1 upgrade covered) |
+| `python3 -m unittest discover -s tests/tools` | 7 passed |
+| `npm run build:web` | Passed |
+| `npm run test:e2e` | 5 browser specifications passed (new: the source-type toggle renders the iptv-org form in the preview with imports still disabled) |
+| Preview of the Sources page (`make dev-web`, built-in browser) | Source-type toggle, both selection methods and the pickers render; no console errors |
+
+Not executed for this change: a native build, an iptv-org import inside the running native application (vault, job, activation) and playback of iptv-org streams. The live test covers download, parsing, selection and serialization with the production network policy, not the SQLite activation path inside a Tauri process.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

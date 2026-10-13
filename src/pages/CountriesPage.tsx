@@ -102,7 +102,8 @@ export default function CountriesPage() {
           title={countries.length ? 'No matching countries.' : 'Add a country to your source.'}
         >
           <p>
-            Countries come from M3U country tags or the default country configured with a source.
+            Countries come from M3U country tags, iptv-org selections or the default country
+            configured with a source.
           </p>
           <Link className="button primary" to="/sources">
             Manage sources

@@ -16,6 +16,29 @@ pub struct SourceInput {
     pub cdn_hosts: Vec<String>,
     #[serde(default)]
     pub country_code: String,
+    /// Present only for iptv-org sources; own M3U playlists leave it absent.
+    #[serde(default)]
+    pub iptv_org: Option<crate::iptv_org::Config>,
+}
+impl SourceInput {
+    /// Aggregator sources list streams on arbitrary public hosts, so the exact host
+    /// allowlist does not apply; every other network protection still does.
+    pub fn is_aggregator(&self) -> bool {
+        self.iptv_org.is_some()
+    }
+    pub fn kind(&self) -> &'static str {
+        if self.iptv_org.is_some() {
+            "iptv-org"
+        } else {
+            "m3u"
+        }
+    }
+    pub fn refresh_interval_seconds(&self) -> i64 {
+        self.iptv_org
+            .as_ref()
+            .map_or(6, |config| i64::from(config.cache.metadata_refresh_hours))
+            * 3600
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -23,6 +46,7 @@ pub struct SourceInput {
 pub struct Source {
     pub id: String,
     pub name: String,
+    pub kind: String,
     pub channels: i64,
     pub updated_at: Option<i64>,
     pub has_epg: bool,

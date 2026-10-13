@@ -26,7 +26,7 @@ make dev
 
 ## Application flow
 
-Create a local vault passphrase, add an authorized HTTP(S) M3U source, and optionally configure ordered XMLTV feeds and authorized CDN hosts. Browse countries, groups and favorites; open the guide or play a channel. Background refresh runs while the native application is open and unlocked. No sample subscription, cloud account or published channel database is bundled.
+Create a local vault passphrase, then add either an authorized HTTP(S) M3U source (optionally with ordered XMLTV feeds and authorized CDN hosts) or an iptv-org source: official country, category, language, region, subdivision, city or master playlists, or a custom country-mode, category and language selection computed locally from the public iptv-org datasets. Both source kinds share the same catalogue, guide, favorites and player. Browse countries, groups and favorites; open the guide or play a channel. Background refresh runs while the native application is open and unlocked. No sample subscription, cloud account or published channel database is bundled.
 
 The channel grid and guide virtualize visible rows. D-pad navigation tracks logical channel/programme positions rather than scanning the whole document. Android playback uses a native Media3 surface; desktop playback lazily loads HLS or DASH support. Stream URLs and provider headers stay out of application routes.
 

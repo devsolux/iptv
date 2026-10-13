@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod iptv_org;
 pub mod limits;
 pub mod m3u;
 pub mod manifest;
@@ -11,20 +12,20 @@ pub mod xmltv;
 
 use db::Database;
 use error::{Error, Result};
-use limits::{LimitedRead, MAX_M3U_BYTES, MAX_XML_BYTES};
-use models::Job;
+use limits::{LimitedRead, MAX_JSON_BYTES, MAX_M3U_BYTES, MAX_XML_BYTES};
+use models::{Job, SourceInput};
 use network::NetworkPolicy;
 use relay::Relay;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::{File, OpenOptions},
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Cursor, Read},
     path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::Semaphore;
 use uuid::Uuid;
@@ -34,6 +35,11 @@ use zeroize::Zeroizing;
 struct TrackedJob {
     job: Job,
     cancel: Arc<AtomicBool>,
+}
+struct CatalogCache {
+    fetched: Instant,
+    key: String,
+    catalog: iptv_org::Catalog,
 }
 
 pub struct Core {
@@ -45,6 +51,7 @@ pub struct Core {
     source_gate: Mutex<()>,
     imports: Arc<Semaphore>,
     unlocks: Arc<Semaphore>,
+    catalog: Mutex<Option<CatalogCache>>,
     _profile_lock: File,
 }
 impl Core {
@@ -69,6 +76,7 @@ impl Core {
             source_gate: Mutex::new(()),
             imports: Arc::new(Semaphore::new(1)),
             unlocks: Arc::new(Semaphore::new(1)),
+            catalog: Mutex::new(None),
             _profile_lock: profile_lock,
         });
         let weak = Arc::downgrade(&core);
@@ -270,27 +278,11 @@ impl Core {
         check_cancel(&cancel)?;
         self.require_unlocked()?;
         let config = self.database.source_config(source_id, &self.vault)?;
-        let policy = NetworkPolicy::new(&config.playlist_url, &config)?;
-        self.progress(job_id, "playlist", 0);
-        let response = policy.get_blocking(&config.playlist_url, &BTreeMap::new())?;
-        let reader = decoded(response, MAX_M3U_BYTES, cancel.clone())?;
         let mut import = self.database.importer(source_id, &self.vault)?;
-        let mut count = 0u64;
-        let metadata = m3u::parse(reader, |mut channel| {
-            check_cancel(&cancel)?;
-            if channel.country.is_empty() {
-                channel.country = config.country_code.to_ascii_uppercase();
-            }
-            import.channel(channel)?;
-            count += 1;
-            if count.is_multiple_of(256) {
-                self.progress(job_id, "playlist", count);
-            }
-            Ok(())
-        })?;
-        // Header-advertised EPG URLs are parsed but never followed implicitly. Only user
-        // configured feeds have network authority; this prevents a playlist granting it.
-        let _suggestions = metadata.suggested_epg_urls;
+        let count = match &config.iptv_org {
+            None => self.import_playlist(&config, job_id, &cancel, &mut import)?,
+            Some(org) => self.import_iptv_org(&config, org, job_id, &cancel, &mut import)?,
+        };
         for (priority, epg_url) in config.epg_urls.iter().enumerate() {
             check_cancel(&cancel)?;
             self.progress(job_id, "epg", 0);
@@ -324,6 +316,123 @@ impl Core {
         self.progress(job_id, "activating", count);
         import.activate()
     }
+    /// Own M3U playlists: one bounded download parsed straight into the staging generation.
+    fn import_playlist(
+        &self,
+        config: &SourceInput,
+        job_id: &str,
+        cancel: &Arc<AtomicBool>,
+        import: &mut db::Import<'_>,
+    ) -> Result<u64> {
+        let policy = NetworkPolicy::new(&config.playlist_url, config)?;
+        self.progress(job_id, "playlist", 0);
+        let response = policy.get_blocking(&config.playlist_url, &BTreeMap::new())?;
+        let reader = decoded(response, MAX_M3U_BYTES, cancel.clone())?;
+        let mut count = 0u64;
+        let metadata = m3u::parse(reader, |mut channel| {
+            check_cancel(cancel)?;
+            if channel.country.is_empty() {
+                channel.country = config.country_code.to_ascii_uppercase();
+            }
+            import.channel(channel)?;
+            count += 1;
+            if count.is_multiple_of(256) {
+                self.progress(job_id, "playlist", count);
+            }
+            Ok(())
+        })?;
+        // Header-advertised EPG URLs are parsed but never followed implicitly. Only user
+        // configured feeds have network authority; this prevents a playlist granting it.
+        let _suggestions = metadata.suggested_epg_urls;
+        Ok(count)
+    }
+    /// iptv-org sources: official prebuilt playlists, or a local JSON selection serialized to
+    /// M3U and parsed by the same importer as user playlists.
+    fn import_iptv_org(
+        &self,
+        config: &SourceInput,
+        org: &iptv_org::Config,
+        job_id: &str,
+        cancel: &Arc<AtomicBool>,
+        import: &mut db::Import<'_>,
+    ) -> Result<u64> {
+        let base = iptv_org::playlist_base(config)?;
+        let policy = NetworkPolicy::new(base.as_str(), config)?;
+        let mut count = 0u64;
+        match org.method {
+            iptv_org::Method::Playlist => {
+                for pick in &org.playlists {
+                    check_cancel(cancel)?;
+                    let (url, country) =
+                        iptv_org::official_url(&base, pick, &org.geography.country_aliases)?;
+                    self.progress(job_id, "playlist", count);
+                    let response = policy.get_blocking(&url, &BTreeMap::new())?;
+                    let reader = decoded(response, MAX_M3U_BYTES, cancel.clone())?;
+                    m3u::parse_with(reader, true, |mut channel| {
+                        check_cancel(cancel)?;
+                        if channel.country.is_empty() {
+                            channel.country = country
+                                .clone()
+                                .unwrap_or_else(|| config.country_code.to_ascii_uppercase());
+                        }
+                        import.channel(channel)?;
+                        count += 1;
+                        if count.is_multiple_of(256) {
+                            self.progress(job_id, "playlist", count);
+                        }
+                        Ok(())
+                    })?;
+                }
+                if count == 0 {
+                    return Err(Error::Invalid(
+                        "The selected iptv-org playlists contain no channels; the previous catalogue was preserved.",
+                    ));
+                }
+            }
+            iptv_org::Method::Catalogue => {
+                let api = org.api_url()?.as_str().trim_end_matches('/').to_owned();
+                let mut loaded = 0u64;
+                self.progress(job_id, "metadata", 0);
+                let dataset = iptv_org::load(|file| {
+                    check_cancel(cancel)?;
+                    let response =
+                        policy.get_blocking(&format!("{api}/{file}"), &BTreeMap::new())?;
+                    let reader = decoded(response, MAX_JSON_BYTES, cancel.clone())?;
+                    loaded += 1;
+                    self.progress(job_id, "metadata", loaded);
+                    Ok(Box::new(reader) as Box<dyn Read>)
+                })?;
+                check_cancel(cancel)?;
+                self.progress(job_id, "selection", 0);
+                let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                let entries =
+                    iptv_org::select(&dataset, org, &today, |url| policy.check_url(url).is_ok())?;
+                drop(dataset);
+                if entries.is_empty() {
+                    return Err(Error::Invalid(
+                        "No iptv-org streams match this selection; the previous catalogue was preserved.",
+                    ));
+                }
+                self.progress(job_id, "selection", entries.len() as u64);
+                let text = iptv_org::serialize(
+                    &entries,
+                    &config.epg_urls,
+                    org.playlist.emit_vlc_http_options,
+                );
+                drop(entries);
+                m3u::parse(Cursor::new(text), |channel| {
+                    check_cancel(cancel)?;
+                    import.channel(channel)?;
+                    count += 1;
+                    if count.is_multiple_of(256) {
+                        self.progress(job_id, "playlist", count);
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(count)
+    }
     pub fn refresh_due(self: &Arc<Self>) {
         if !self.vault.is_unlocked() {
             return;
@@ -331,11 +440,56 @@ impl Core {
         if let Ok(sources) = self.database.sources() {
             let now = chrono::Utc::now().timestamp();
             for source in sources {
-                if source.updated_at.is_none_or(|last| now - last >= 6 * 3600) {
+                // Own playlists keep the six-hour cadence; iptv-org sources use their own.
+                let interval = self
+                    .database
+                    .source_config(&source.id, &self.vault)
+                    .map_or(6 * 3600, |config| config.refresh_interval_seconds());
+                if source.updated_at.is_none_or(|last| now - last >= interval) {
                     let _ = self.start_job(source.id);
                 }
             }
         }
+    }
+    /// Presentation catalogue (countries, categories, languages, regions) for the source
+    /// form, fetched read-only from the API host and cached for a day.
+    pub fn iptv_org_catalog(
+        &self,
+        api_base: Option<&str>,
+        playlist_base: Option<&str>,
+    ) -> Result<iptv_org::Catalog> {
+        self.require_unlocked()?;
+        let api = iptv_org::base_url(api_base.unwrap_or_default(), iptv_org::DEFAULT_API_BASE)?;
+        let playlists = iptv_org::base_url(
+            playlist_base.unwrap_or_default(),
+            iptv_org::DEFAULT_PLAYLIST_BASE,
+        )?;
+        let key = format!("{api}\u{1f}{playlists}");
+        if let Ok(cache) = self.catalog.lock()
+            && let Some(entry) = cache.as_ref()
+            && entry.key == key
+            && entry.fetched.elapsed() < Duration::from_secs(24 * 3600)
+        {
+            return Ok(entry.catalog.clone());
+        }
+        let policy = NetworkPolicy::public(api.as_str())?;
+        let api = api.as_str().trim_end_matches('/').to_owned();
+        let catalog = iptv_org::load_catalog(
+            |file| {
+                let response = policy.get_blocking(&format!("{api}/{file}"), &BTreeMap::new())?;
+                let reader = decoded(response, MAX_JSON_BYTES, Arc::new(AtomicBool::new(false)))?;
+                Ok(Box::new(reader) as Box<dyn Read>)
+            },
+            &playlists,
+        )?;
+        if let Ok(mut cache) = self.catalog.lock() {
+            *cache = Some(CatalogCache {
+                fetched: Instant::now(),
+                key,
+                catalog: catalog.clone(),
+            });
+        }
+        Ok(catalog)
     }
 }
 fn check_cancel(cancel: &AtomicBool) -> Result<()> {
