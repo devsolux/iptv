@@ -21,13 +21,16 @@ Android needs JDK 17, SDK 36 and an NDK/toolchain compatible with the selected T
 | Tailwind CSS | 4.3.3 |
 | Tauri Rust / JavaScript API | 2.12.3 |
 | Tauri CLI | 2.12.2 |
+| React typings (`@types/react`, `@types/react-dom`) | 19.3.0 |
 | TanStack React Virtual / Zustand | 3.14.17 / 5.0.15 |
 | hls.js / dash.js | 1.7.3 / 5.2.1 |
 | Android Media3 | 1.11.1 |
 
-All direct declarations are in `package.json`, the Cargo workspace and the player Gradle file. Upstream release information is not proof that the combined graph compiles. Two React typing packages could not be independently pinned in this environment and are explicitly resolved by bootstrap. There is no committed npm/Cargo graph yet.
+All direct declarations are in `package.json`, the Cargo workspace and the player Gradle file. Upstream release information is not proof that the combined graph compiles. Every direct npm dependency is an exact version, and the resolved graphs are committed as `package-lock.json` and `src-tauri/Cargo.lock`; see [VERIFICATION.md](VERIFICATION.md) for what was built and tested against them.
 
-## First resolution versus normal installation
+## Normal installation versus dependency upgrades
+
+Day-to-day work uses `make install` (`npm ci` and `cargo fetch --locked`). The sequence below is only for a deliberate upgrade: `make bootstrap` moves every pin to the current stable release and regenerates both lockfiles.
 
 ```sh
 make doctor
@@ -61,7 +64,7 @@ Windows users without GNU Make can use `npm run dev`, `npm run bootstrap`, `npm 
 
 ## Release ownership
 
-CI performs checks and unsigned/unbundled native builds; it does not publish. Missing lockfiles cause dependency-dependent jobs to fail intentionally until bootstrap is completed and reviewed. Signing certificates, Android keystores, passwords and store uploads are owner-controlled release inputs outside the repository. Do not place them in `VITE_*` variables or frontend code.
+CI performs checks and unsigned/unbundled native builds; it does not publish. Dependency-dependent jobs install the committed lockfiles with `npm ci` and Cargo `--locked`; a missing or stale lock fails them instead of resolving a different graph. Signing certificates, Android keystores, passwords and store uploads are owner-controlled release inputs outside the repository. Do not place them in `VITE_*` variables or frontend code.
 
 No OS release, code-signing, package audit, store acceptance or device-performance claim is implied by the presence of a build target. Follow [VERIFICATION.md](VERIFICATION.md).
 

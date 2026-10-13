@@ -4,7 +4,7 @@
 
 A unified Ionic React / Tauri 2 application for user-supplied IPTV playlists and XMLTV guides. Catalogue processing, persistence, credentials and playback authorization belong to Rust; the UI owns presentation and remote interaction.
 
-> **Delivery status:** implementation source, not a compiled or certified release. Native builds, full dependency-aware type checking and physical-device playback have not been verified. Dependency lockfiles could not be generated in the authoring environment. Read [verification](docs/VERIFICATION.md) and [compatibility](docs/COMPATIBILITY.md) before release.
+> **Delivery status:** verified source, not a certified release. The resolved dependency graph is committed; type checking, linting, the Rust, frontend, SQL and tooling suites, browser tests and an unbundled macOS desktop build pass. Android packaging, signing, other desktop platforms and physical-device playback have not been verified. Read [verification](docs/VERIFICATION.md) and [compatibility](docs/COMPATIBILITY.md) before release.
 
 ## First build
 
@@ -18,9 +18,9 @@ make check
 make dev
 ```
 
-`bootstrap` is an **explicit dependency-maintenance step**: it queries the current stable npm, Cargo, Rust and Media3 releases, pins exact versions and generates both lockfiles. Review the resulting manifest/API changes and commit the locks. Two React typing packages remain `latest` in this source delivery; release checks deliberately reject those until bootstrap resolves them. No fake lockfiles are included.
+`package-lock.json` and `src-tauri/Cargo.lock` are committed, and every direct dependency is pinned to an exact version, so most machines only need `make install` (`npm ci` plus `cargo fetch --locked`). Ordinary builds never update packages.
 
-On subsequent machines, use `make install` to consume the committed dependency graphs. Ordinary builds never update packages. Equivalent npm scripts work without Make; see [building](docs/BUILDING.md).
+`bootstrap` is an **explicit dependency-maintenance step**: it moves every npm, Cargo, Rust and Media3 pin to the current stable release and regenerates both lockfiles. Run it deliberately, review the resulting manifest/API changes, then commit the locks. Equivalent npm scripts work without Make; see [building](docs/BUILDING.md).
 
 `make dev-web` provides a read-only, 50,000-channel synthetic preview. It is not a web-hosted production player and does not expose credentials or native operations.
 
@@ -52,6 +52,7 @@ make build-android          # ARMv7 and ARM64 Android packages
 make build-macos-universal  # Both Mac architectures, on macOS
 make test                   # Dependency-free frontend algorithm tests
 make test-sql               # SQLite invariant tests, Python 3 required
+make test-tools             # Build-tool safety tests, Python 3 required
 make test-e2e               # Requires installed Playwright browser
 make clean                  # Known generated outputs only
 ```
@@ -62,6 +63,6 @@ No command deploys, publishes, creates signing keys or erases application user d
 
 This project follows the requested latest-stable dependency direction, including Tailwind 4. Older Fire OS WebViews may not meet that browser floor. **Fire OS 6/7/8 and 60 fps are acceptance targets, not verified support claims.** ARMv7 packaging alone does not establish compatibility.
 
-[Architecture](docs/ARCHITECTURE.md) · [Building](docs/BUILDING.md) · [Security](docs/SECURITY.md) · [Compatibility and gaps](docs/COMPATIBILITY.md) · [Verification](docs/VERIFICATION.md) · [Migration](docs/MIGRATION.md)
+[Architecture](docs/ARCHITECTURE.md) · [Building](docs/BUILDING.md) · [Security](docs/SECURITY.md) · [Compatibility and gaps](docs/COMPATIBILITY.md) · [Verification](docs/VERIFICATION.md) · [Migration](docs/MIGRATION.md) · [Agent guide](AGENTS.md)
 
-This private source delivery is `UNLICENSED`. Original supplied artwork and flags retain their existing rights; redistribution rights have not been established. See `NOTICE.md` and `public/ASSET_PROVENANCE.txt`.
+The source code is released under the [MIT License](LICENSE). The supplied application artwork and flags retain their existing rights; their provenance is recorded in `public/ASSET_PROVENANCE.txt`, and redistribution rights must be confirmed before a public release.

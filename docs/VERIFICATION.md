@@ -1,33 +1,58 @@
 # Verification record
 
-Date: **October 13, 2026**. This is an implementation-source delivery, **not a verified production release**.
+Date: **October 13, 2026**. This is verified source, **not a certified production release**.
+
+## Environment
+
+macOS on Apple Silicon (arm64), Node 24.21.0 (`.node-version` selects 26.11.1; `engines` accepts 22.12 or newer), npm 11.19.0, Rust and Cargo 1.99.0 (the `rust-toolchain.toml` pin), Python 3.11.17 and Playwright's Chromium headless shell. Dependencies were installed from the exact pins already declared in the manifests; `package-lock.json` and `src-tauri/Cargo.lock` were generated from those pins without running `make bootstrap`, so no version was upgraded.
 
 ## Executed checks
 
-The authoring environment has Node 22.16.0, npm 10.9.2, Python 3.13.5 and a global TypeScript 5.8.3 parser. It has no Rust/Cargo toolchain and cannot reach package registries for installation.
-
 | Check | Result |
 | --- | --- |
-| `npm test` | 10 frontend algorithm tests passed |
-| `python -m unittest discover -s tests/sql -v` | 11 SQLite invariant tests passed |
-| TypeScript 5.8.3 parser scan | 33 TS/TSX files; no syntax diagnostics (not semantic type checking) |
-| Node syntax checks | All build/configuration scripts parsed |
-| Source identity and declared authority checks | Passed |
-| `python -m unittest discover -s tests/tools -v` | 7 build-tool safety/invariant tests passed |
+| `node scripts/project.mjs verify` (`make verify-source`) | Passed |
+| `node scripts/project.mjs release` (`make verify-release`) | Passed: exact pins and both lockfiles |
+| `npm run typecheck` (TypeScript 7.0.2, `tsc -b`) | Passed |
+| Biome on all project sources (`src`, `tests`, `scripts`, root configs) | Passed, no diagnostics |
+| `npm run lint` on the whole tree | Fails only on the vendored `public/flags/*.svg` (third-party assets); see open items |
+| `npm test` | 11 frontend tests passed |
+| `cargo fmt --all -- --check` | Passed |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| `cargo test --workspace --locked` | 14 Rust tests passed |
+| `python3 -m unittest discover -s tests/sql` | 11 SQLite invariant tests passed |
+| `python3 -m unittest discover -s tests/tools` | 7 build-tool tests passed |
+| `npm run build:web` | Passed |
+| `npm run test:e2e` (Playwright, Chromium) | 4 browser specifications passed |
+| `npm run tauri -- build --no-bundle -- --locked` | Passed: macOS arm64 release binary |
+| Launch smoke test of that binary | Started and stayed up; created a `0700` profile with `0600` database and lock files; the relay listened on `127.0.0.1` only |
+| `npm audit` | 0 vulnerabilities |
+| `cargo audit` | 0 vulnerabilities; 2 upstream warnings via Tauri's Linux GTK stack (`proc-macro-error` unmaintained, RUSTSEC-2024-0370; `glib` 0.18 `VariantStrIter` unsound, RUSTSEC-2024-0429) |
 
-`verification-results.json` records final repeat checks and their actual outputs. The SQL suite executes the shipped migration and extracts the actual Rust query/matching SQL. It does not execute the Rust database adapter. The Node tests cover deterministic focus/paging behavior; they are not React component or native tests.
+`verification-results.json` holds the same results in machine-readable form. The SQL suite executes the shipped migration and the actual query/matching SQL extracted from `db.rs`. The Rust suite exercises the parsers, vault, network policy, manifest rewriting and the database adapter. The browser specifications run against the read-only development preview, not the native application.
+
+## Defects found by this verification
+
+Running the real toolchain for the first time exposed defects that are now fixed and covered:
+
+- The Rust core did not compile against its declared quick-xml 0.42 (changed text, name and attribute APIs).
+- A cancelled import reported `ErrorKind::Interrupted`, which std and quick-xml retry: a cancelled XMLTV import spun forever and held the single import permit (regression test in `tests/core.rs`).
+- An import held a SQLite write transaction while the parser waited on the network, so toggling a favorite or editing sources during a refresh failed with a storage error (regression test in `tests/core.rs`).
+- Every catalogue change reset the channel pager to an empty result, collapsing the virtual grid and returning to the top (unit and browser regression tests).
+- XMLTV guide URLs containing commas were split into invalid URLs when a source was added.
+- Programme titles with characters outside the Basic Multilingual Plane could exceed the UI contract's UTF-16 bound and break the guide window.
+- `scripts/project.mjs` silently skipped every task, exiting 0, when the checkout path contained a symlink (for example macOS temporary directories), so the release gate could pass without running.
 
 ## Not executed / not established
 
-Dependency installation and peer compatibility; full TypeScript 7 semantic checking; Biome and Rustfmt; Cargo compilation, Clippy and the 11 written Rust tests; the 3 written Playwright browser specifications; Android host generation/Gradle/Media3 compilation; native desktop packages; signing; real streaming/decoder behavior; hardware acceleration; Fire OS support; 60 fps; memory/thermal/long-session behavior; package vulnerability/license audits.
+Android host generation, Gradle/Media3 compilation and APK/AAB packaging; Windows and Linux builds; the macOS universal build, `.app`/`.dmg` bundling, signing and notarization; GitHub Actions runs of these workflows for this revision; real streaming, decoder and hardware-acceleration behavior; Fire OS 6/7/8 devices, 60 fps, memory, thermal and long-session behavior; dependency license review.
 
-The lockfile/release gate is expected to fail in this source delivery: `package-lock.json` and `src-tauri/Cargo.lock` are absent, and two React typing dependencies await exact resolution. Lockfiles were not fabricated. The explicit bootstrap performs that resolution on a networked machine; follow it with formatting, type checking, tests and actual native builds. Build/API fixes may be necessary once the real dependency graph is installed.
+## Open items
 
-The CI configuration is a verification pipeline to run on the resolved repository, not evidence that CI has already passed. Dependency-dependent jobs intentionally fail until reviewed lockfiles are committed.
+- `npm run lint` and therefore `make check` stop at the vendored flag SVGs (`noSvgWithoutTitle`). Excluding `public/flags` in `biome.json` (and enabling `css.parser.tailwindDirectives`, migrating `recommended` to `preset`) resolves it without touching the assets.
 
 ## Release acceptance checklist
 
-1. Resolve/pin dependencies; review APIs and license/vulnerability reports; commit both locks and generated toolchain changes. Run `make fmt`, `make check`, `make test-sql` and `make test-e2e` without weakening tests.
+1. Keep dependencies pinned and both locks committed; review API changes, vulnerability and license reports after any `make bootstrap`. Run `make fmt`, `make check`, `make test-sql`, `make test-tools` and `make test-e2e` without weakening tests.
 2. Build each native target on the correct OS, inspect merged Android release network/backup/TV configuration, verify macOS ATS and all platform media transports.
 3. Test authorized HLS/DASH/progressive streams, provider headers, redirects, byte ranges, extensionless manifests, session cancellation, wrong credentials and unsupported formats. Test external-manifest references against the network policy.
 4. Test vault create/unlock/lock, wrong passwords, fresh installs, database migrations, interrupted/empty imports, stable favorites, EPG timezone/matching ambiguity and input size limits.

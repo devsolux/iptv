@@ -22,4 +22,4 @@ Changing the identifier means a different installed application/data location on
 
 ## Rights and release ownership
 
-No license was invented for the supplied application artwork or flag collection. Their provenance is documented, and redistribution rights remain an owner review item. The source package is private/UNLICENSED. No commit, push, production deployment, stream publication or signing operation has been performed.
+No license was invented for the supplied application artwork or flag collection. Their provenance is documented, and redistribution rights remain an owner review item. The source code is licensed under the MIT License (`LICENSE`). No production deployment, stream publication or signing operation has been performed.
