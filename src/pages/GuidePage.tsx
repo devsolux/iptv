@@ -145,7 +145,9 @@ export default function GuidePage() {
     },
   });
   function play(channel: Channel) {
-    navigate(`/play/${channel.id}`, { state: { returnTo: location.pathname } });
+    navigate(`/play/${channel.id}`, {
+      state: { returnTo: location.pathname, variants: channel.variants },
+    });
   }
   function moveWindow(direction: number) {
     const next = start + direction * WINDOW;

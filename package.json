@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "IPTV \u2014 an offline-first, remote-friendly Ionic and Tauri application",
+  "description": "IPTV — an offline-first, remote-friendly Ionic and Tauri application",
   "author": "Baris Aydin",
   "engines": {
     "node": ">=22.12.0",
@@ -35,13 +35,14 @@
     "@ionic/react": "9.0.7",
     "@tanstack/react-virtual": "3.14.17",
     "@tauri-apps/api": "2.12.3",
+    "dashjs": "5.2.1",
+    "hls.js": "1.7.3",
+    "mpegts.js": "1.8.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-router": "8.4.0",
-    "zustand": "5.0.15",
-    "hls.js": "1.7.3",
-    "dashjs": "5.2.1",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "zustand": "5.0.15"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

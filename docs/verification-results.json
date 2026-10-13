@@ -38,7 +38,7 @@
     { "command": "python3 -m unittest discover -s tests/sql", "result": "passed", "tests": 12 },
     { "command": "python3 -m unittest discover -s tests/tools", "result": "passed", "tests": 7 },
     { "command": "npm run build:web", "result": "passed" },
-    { "command": "npm run test:e2e", "result": "passed", "tests": 5 },
+    { "command": "npm run test:e2e", "result": "passed", "tests": 6 },
     {
       "command": "cargo test -p iptv-core --test core -- --ignored live_",
       "result": "passed",
@@ -85,7 +85,8 @@
     "performance benchmarks",
     "dependency license review",
     "iptv-org playback inside the native application",
-    "artwork rendering inside the native WebView"
+    "artwork rendering inside the native WebView",
+    "rebuilt player controls, mpegts.js playback and variant fallback inside the native application"
   ],
   "openItems": ["Exclude vendored public/flags from Biome in biome.json"],
   "originalArchiveHashes": {

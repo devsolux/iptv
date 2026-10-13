@@ -80,7 +80,7 @@ export const playbackSchema = z.object({
         url.pathname.startsWith('/media/')
       );
     }, 'The player requires a local session URL.'),
-  kind: z.enum(['hls', 'dash', 'progressive']),
+  kind: z.enum(['hls', 'dash', 'progressive', 'mpegts', 'flv']),
   native: z.boolean(),
   variants: z.number().int().min(1).max(32),
 });

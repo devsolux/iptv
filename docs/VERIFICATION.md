@@ -67,6 +67,19 @@ Playing iptv-org streams in the native application produced policy, network, can
 
 Not executed: launching the native application against these changes, artwork rendering inside the WebView under the updated CSP, Android, and playback of streams that need cookies or unverified certificates (covered by code and unit tests only).
 
+## Player controls and engine fallbacks (October 13, 2026)
+
+The player page was rebuilt with an icon toolbar that auto-hides over the video, fullscreen that shows only the picture, automatic fallback to the next stream variant when a stream fails before its first frame, distinct messages for codec, format and connection failures, and mpegts.js (pinned 1.8.2) for raw MPEG-TS/FLV streams that WebKit's `<video>` rejects; the relay probe now reports `mpegts` and `flv` containers.
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check`, clippy `-D warnings`, `cargo test --workspace --locked` | Passed, 22 tests, 3 ignored |
+| `npm run typecheck`, Biome on `src` and `tests`, `npm test` | Passed, 16 tests |
+| `npm run build:web`, `npm run test:e2e` | Passed, 6 specifications (new: player toolbar, error card and Back action in the preview) |
+| Preview of the player page (built-in browser) | Top chrome, icon toolbar, volume slider and error card render |
+
+Not executed: live playback with the rebuilt controls inside the native application, raw MPEG-TS playback through mpegts.js, and the variant fallback against a real failing stream.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

@@ -83,7 +83,9 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
     }
   }, [catalogue.ready, catalogue.total, catalogue.pages, focus.focusIndex]);
   const play = (channel: Channel) =>
-    navigate(`/play/${channel.id}`, { state: { returnTo: location.pathname } });
+    navigate(`/play/${channel.id}`, {
+      state: { returnTo: location.pathname, variants: channel.variants },
+    });
   const openActions = () => {
     const channel = catalogue.pager.at(focus.selected);
     if (channel) {

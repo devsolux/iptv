@@ -12,7 +12,7 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
 
 | Path | Responsibility |
 | --- | --- |
-| `src/` | React UI: `pages/`, `components/`, `hooks/` (focus, paging, player), `lib/` (bridge, contracts, pager), `store/` (Zustand UI state) |
+| `src/` | React UI: `pages/`, `components/`, `hooks/` (focus, paging, player with hls.js / dash.js / mpegts.js engines), `lib/` (bridge, contracts, pager), `store/` (Zustand UI state) |
 | `src-tauri/src/lib.rs` | Tauri commands, app state, lifecycle |
 | `src-tauri/crates/iptv-core/` | M3U/XMLTV parsers, SQLite generations (`db.rs`), vault, network policy, HLS/DASH relay, iptv-org integration (`iptv_org.rs`) |
 | `src-tauri/plugins/player/` | Android Media3 player plugin (Kotlin) |

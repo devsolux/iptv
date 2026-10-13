@@ -56,3 +56,15 @@ test('browser preview exposes the iptv-org source type without enabling native i
   await page.getByRole('radio', { name: 'Own M3U playlist' }).check();
   await expect(page.getByLabel('M3U playlist URL')).toBeVisible();
 });
+test('player page shows the icon control bar and a readable error in the preview', async ({
+  page,
+}) => {
+  await page.goto('/#/play/10000000-0000-4000-8000-000000000001');
+  await expect(page.getByRole('toolbar', { name: 'Playback controls' })).toBeVisible();
+  for (const name of ['Play', 'Back 10 seconds', 'Forward 10 seconds', 'Mute', 'Fullscreen'])
+    await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('read-only preview');
+  await expect(page.getByRole('button', { name: 'Retry channel' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to channels' }).click();
+  await expect(page).toHaveURL(/#\/channels$/);
+});

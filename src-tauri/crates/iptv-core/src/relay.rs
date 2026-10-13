@@ -214,6 +214,14 @@ impl Relay {
             || root.path().to_ascii_lowercase().ends_with(".mpd")
         {
             "dash"
+        } else if prefix.len() > 376
+            && prefix[0] == 0x47
+            && prefix[188] == 0x47
+            && prefix[376] == 0x47
+        {
+            "mpegts"
+        } else if prefix.starts_with(b"FLV\x01") {
+            "flv"
         } else {
             "progressive"
         };

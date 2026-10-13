@@ -11,6 +11,14 @@ const paths = {
   refresh: 'M20 7a9 9 0 1 0 1 8M20 2v6h-6',
   close: 'm5 5 14 14M19 5 5 19',
   more: 'M5 11h1v2H5zM11 11h1v2h-1zM17 11h1v2h-1z',
+  pause: 'M7 5h3v14H7zM14 5h3v14h-3z',
+  rewind: 'M11 5a7 7 0 1 1-6.3 4M4 4v5h5',
+  forward: 'M13 5a7 7 0 1 0 6.3 4M20 4v5h-5',
+  live: 'M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8',
+  volume: 'M4 9v6h4l5 4V5L8 9H4ZM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11',
+  volumeOff: 'M4 9v6h4l5 4V5L8 9H4ZM17 9l4 6M21 9l-4 6',
+  fullscreen: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5',
+  fullscreenExit: 'M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5',
 } as const;
 export function Icon({ name, size = 22 }: { name: keyof typeof paths; size?: number }) {
   return (
