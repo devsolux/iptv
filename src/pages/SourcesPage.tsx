@@ -288,7 +288,7 @@ export default function SourcesPage() {
           <h2>New source</h2>
           <fieldset className="source-type" disabled={saving}>
             <legend className="sr-only">Source type</legend>
-            <label>
+            <label className={kind === 'm3u' ? 'is-selected' : undefined}>
               <input
                 data-focus
                 type="radio"
@@ -299,7 +299,7 @@ export default function SourcesPage() {
               />
               <span>Own M3U playlist</span>
             </label>
-            <label>
+            <label className={kind === 'iptv-org' ? 'is-selected' : undefined}>
               <input
                 data-focus
                 type="radio"

@@ -18,7 +18,22 @@ export function focusNavigation() {
   nav?.querySelector<HTMLElement>('[aria-current="page"]')?.focus();
 }
 export function focusPageStart() {
-  document.getElementById('page-focus-start')?.focus();
+  const start = document.getElementById('page-focus-start');
+  if (!start) return;
+  const typing =
+    start instanceof HTMLInputElement && !['checkbox', 'radio', 'range'].includes(start.type);
+  // Remote-controlled screens: entering a page must not open the on-screen keyboard.
+  if (typing && !window.matchMedia('(hover: hover)').matches) {
+    const scope = start.closest('.page') ?? document.getElementById('workspace');
+    const next = scope?.querySelector<HTMLElement>(
+      'select[data-focus]:not([disabled]), .virtual-viewport [data-focus], .guide-row button, button[data-focus]:not([disabled])',
+    );
+    if (next) {
+      next.focus();
+      return;
+    }
+  }
+  start.focus();
 }
 export function Shell() {
   useEffect(() => {

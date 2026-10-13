@@ -1,3 +1,6 @@
+# Verification of every push and pull request against the committed dependency graph.
+# Actions are pinned to the commit of their latest stable release (checked 2026-10-13) and
+# runner images are pinned so system packages (WebKitGTK, indicators) stay known.
 name: Verify IPTV
 on:
   push:
@@ -7,11 +10,20 @@ permissions:
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  NPM_CONFIG_AUDIT: 'false'
+  NPM_CONFIG_FUND: 'false'
 jobs:
   source:
-    runs-on: ubuntu-latest
+    name: Source policy, SQL and tooling suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
@@ -20,9 +32,13 @@ jobs:
       - run: python3 -m unittest discover -s tests/sql -v
       - run: python3 -m unittest discover -s tests/tools -v
   web:
-    runs-on: ubuntu-latest
+    name: Frontend checks, build and browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
@@ -35,28 +51,46 @@ jobs:
       - run: npm run build:web
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Keep traces of failed browser specifications
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-test-results
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
   native:
+    name: Native checks (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
       - run: node scripts/project.mjs locks
       - run: npm ci
       - if: runner.os == 'Linux'
-        # Same Tauri 2 prerequisites as releases.yml; Ubuntu 24.04+ ships only the Ayatana indicator.
+        # Same Tauri 2 prerequisites as releases.yml; Ubuntu 24.04 ships only the Ayatana indicator.
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libssl-dev libgtk-3-dev \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libxdo-dev patchelf
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked
-      - run: npm run tauri -- build --no-bundle
+      - run: npm run tauri -- build --no-bundle -- --locked

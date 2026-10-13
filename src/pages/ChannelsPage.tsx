@@ -38,7 +38,7 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
   });
   const items = virtual.getVirtualItems();
   const first = items[0]?.index ?? 0;
-  const last = items.at(-1)?.index ?? 0;
+  const last = items[items.length - 1]?.index ?? 0;
   const focus = useDpadFocus({
     container: viewport,
     count: catalogue.total,

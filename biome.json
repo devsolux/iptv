@@ -11,6 +11,7 @@
       "!src-tauri/gen",
       "!src-tauri/target",
       "!dist",
+      "!public/flags",
       "!**/Cargo.lock",
       "!**/package-lock.json"
     ]
@@ -23,7 +24,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "preset": "recommended"
     }
   },
   "javascript": {

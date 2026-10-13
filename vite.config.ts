@@ -12,5 +12,6 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**'] },
   },
   envPrefix: ['VITE_'],
-  build: { target: ['chrome111', 'safari16.4', 'firefox128'], sourcemap: false },
+  // Syntax is lowered for older Fire OS WebViews; CSS floors are documented in COMPATIBILITY.md.
+  build: { target: ['chrome84', 'safari14'], sourcemap: false },
 });

@@ -173,6 +173,9 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (exo.isPlaying) exo.pause() else exo.play(); true }
                         KeyEvent.KEYCODE_MEDIA_PLAY -> { exo.play(); true }
                         KeyEvent.KEYCODE_MEDIA_PAUSE -> { exo.pause(); true }
+                        KeyEvent.KEYCODE_MEDIA_REWIND -> { exo.seekBack(); true }
+                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { exo.seekForward(); true }
+                        KeyEvent.KEYCODE_MEDIA_STOP -> { dismiss(); true }
                         KeyEvent.KEYCODE_MENU -> { view.showController(); true }
                         else -> false
                     }

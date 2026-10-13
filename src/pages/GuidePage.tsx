@@ -46,7 +46,7 @@ export default function GuidePage() {
   });
   const rows = virtual.getVirtualItems();
   const first = rows[0]?.index ?? 0;
-  const last = rows.at(-1)?.index ?? 0;
+  const last = rows[rows.length - 1]?.index ?? 0;
   const visible = rows
     .map((row) => catalogue.pager.at(row.index))
     .filter((channel): channel is Channel => Boolean(channel))

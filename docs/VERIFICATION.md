@@ -80,6 +80,19 @@ The player page was rebuilt with an icon toolbar that auto-hides over the video,
 
 Not executed: live playback with the rebuilt controls inside the native application, raw MPEG-TS playback through mpegts.js, and the variant fallback against a real failing stream.
 
+## Focus styling, artwork centring and Fire OS measures (October 13, 2026)
+
+Channel artwork is centred in its card; text fields and selects draw an accent border on focus instead of the WebView's light-blue ring while buttons and cards keep the strong ring; own styles no longer use `:has()`, `inset` or `backdrop-filter`, `Array.prototype.at` is gone, and the build lowers syntax to Chromium 84 / Safari 14. Remote behaviour: entering a page on a screen without hover no longer focuses the search field, Back first leaves a text field, the desktop player maps rewind, fast-forward and stop media keys, and the Android Media3 dialog handles the same keys (compiled only by `make build-android`).
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck`, Biome on `src` and `tests`, `npm test` | Passed, 16 tests |
+| `npm run build:web` with the lowered target | Passed |
+| `npm run test:e2e` | Passed, 7 specifications (new: Back leaves the search field before the close dialog) |
+| Preview (built-in browser) | Search field and Source select show the accent focus border |
+
+Not executed: the Kotlin change (no local Android toolchain), any Fire OS device, and the hover-less focus behaviour on a real remote.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:
@@ -98,7 +111,7 @@ Android host generation, Gradle/Media3 compilation and APK/AAB packaging; Window
 
 ## Open items
 
-- `npm run lint` and therefore `make check` stop at the vendored flag SVGs (`noSvgWithoutTitle`). Excluding `public/flags` in `biome.json` (and enabling `css.parser.tailwindDirectives`, migrating `recommended` to `preset`) resolves it without touching the assets.
+- Resolved on October 13, 2026: `public/flags` is excluded in `biome.json` and the configuration was migrated to `rules.preset`, so `npm run lint` and `make check` pass; the `web` job of the verification workflow, which had failed on exactly this step since the first push, is green again. `verify.yml` now pins runner images (Ubuntu 24.04, macOS 15, Windows 2025, ahead of the announced `ubuntu-latest` move to Ubuntu 26), caches Cargo builds and keeps Playwright traces of failed specifications. `releases.yml` builds from the committed lockfiles instead of re-resolving dependencies with `make bootstrap` in CI, no longer depends on the uncommitted `docs/dependencies-resolved.json`, uses Temurin JDK 21 for the Android host and signs eleven platform packages.
 
 ## Release acceptance checklist
 

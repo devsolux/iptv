@@ -58,6 +58,17 @@ function NavigationLifecycle() {
         );
         return;
       }
+      const active = document.activeElement;
+      if (
+        (active instanceof HTMLInputElement &&
+          !['checkbox', 'radio', 'range'].includes(active.type)) ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement
+      ) {
+        // A remote's Back first leaves the field and its on-screen keyboard.
+        active.blur();
+        return;
+      }
       if (location.pathname === '/channels') setExit(true);
       else if (location.pathname.startsWith('/play/')) {
         const returnTo: unknown = location.state?.returnTo;

@@ -8,7 +8,7 @@ Use Node 22.12 or newer; `.node-version` selects 26.11.1. npm 10.9 or newer is a
 
 macOS needs Xcode command-line tools; the configured application minimum is macOS 13.3. Universal builds need the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets. Windows requires the MSVC build tools and WebView2. Linux needs the GTK/WebKitGTK development packages and the appropriate GStreamer codecs for actual media playback. System codec availability must be tested separately from compilation.
 
-Android needs JDK 17, SDK 36 and an NDK/toolchain compatible with the selected Tauri CLI. Configure `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME`. Media3 1.11 requires Kotlin 2.2 or newer; inspect the generated host's Kotlin/AGP/Gradle versions against the [Media3 release requirements](https://developer.android.com/jetpack/androidx/releases/media3). The local plugin does not create a second conflicting AGP version authority.
+Android needs JDK 17 or 21 (the release workflow uses Temurin 21), SDK 36 and an NDK/toolchain compatible with the selected Tauri CLI. Configure `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME`. Media3 1.11 requires Kotlin 2.2 or newer; inspect the generated host's Kotlin/AGP/Gradle versions against the [Media3 release requirements](https://developer.android.com/jetpack/androidx/releases/media3). The local plugin does not create a second conflicting AGP version authority.
 
 ## Declared main package versions
 
@@ -64,7 +64,7 @@ Windows users without GNU Make can use `npm run dev`, `npm run bootstrap`, `npm 
 
 ## Release ownership
 
-CI performs checks and unsigned/unbundled native builds; it does not publish. Dependency-dependent jobs install the committed lockfiles with `npm ci` and Cargo `--locked`; a missing or stale lock fails them instead of resolving a different graph. Signing certificates, Android keystores, passwords and store uploads are owner-controlled release inputs outside the repository. Do not place them in `VITE_*` variables or frontend code.
+`verify.yml` runs on every push and pull request: source policy, SQL and tooling suites, the frontend checks with browser tests, and native fmt/clippy/test plus an unbundled Tauri build on pinned Ubuntu 24.04, macOS 15 and Windows 2025 runners. `releases.yml` runs on `workflow_dispatch` or a published release: it validates identity and pins, re-runs the checks, builds desktop and Android packages from the committed lockfiles, signs them with keyless Sigstore and attaches them to the release. Neither workflow resolves or upgrades dependencies; CI does not publish by itself. Dependency-dependent jobs install the committed lockfiles with `npm ci` and Cargo `--locked`; a missing or stale lock fails them instead of resolving a different graph. Signing certificates, Android keystores, passwords and store uploads are owner-controlled release inputs outside the repository. Do not place them in `VITE_*` variables or frontend code.
 
 No OS release, code-signing, package audit, store acceptance or device-performance claim is implied by the presence of a build target. Follow [VERIFICATION.md](VERIFICATION.md).
 

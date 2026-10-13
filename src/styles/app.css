@@ -54,9 +54,6 @@ button:disabled {
 }
 button:focus-visible,
 a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 4px;
@@ -974,7 +971,10 @@ select {
 }
 .video-stage {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: #000;
 }
 .video-stage video {
@@ -1087,7 +1087,6 @@ select {
   color: #e6eefb;
   font-size: 0.74rem;
   font-weight: 600;
-  backdrop-filter: blur(10px);
 }
 .control-button:hover {
   background: #ffffff26;
@@ -1156,7 +1155,10 @@ select {
 }
 .player-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: grid;
   place-items: center;
   background: #04070bb3;
@@ -1455,7 +1457,7 @@ select {
   font-size: 0.74rem;
   cursor: pointer;
 }
-.source-type label:has(input:checked) {
+.source-type label.is-selected {
   border-color: #7ca8f4;
   background: #1b314e;
   color: #dbe7fa;
@@ -1528,7 +1530,7 @@ select {
   width: 100%;
   height: 58px;
   object-fit: contain;
-  object-position: left center;
+  object-position: center;
   margin: auto 0;
   padding: 6px 0;
 }
@@ -1548,4 +1550,49 @@ select {
   margin: 0;
   padding: 0;
   object-position: center;
+}
+
+/* Text fields and selects: the app's accent border instead of the WebView's default ring.
+   The doubled pseudo-class outranks component borders such as the source form's inputs. */
+input:focus-visible:focus-visible,
+select:focus-visible:focus-visible,
+textarea:focus-visible:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px #1f3a66;
+}
+input[type="checkbox"]:focus-visible:focus-visible,
+input[type="radio"]:focus-visible:focus-visible,
+input[type="range"]:focus-visible:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+.search-field:focus-within,
+.select-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px #1f3a66;
+}
+.search-field input:focus-visible:focus-visible,
+.select-field select:focus-visible:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* Remote-controlled screens: keep content clear of TV overscan. */
+@media (hover: none) and (min-width: 1100px) {
+  .page {
+    padding-left: 3vw;
+    padding-right: 3vw;
+  }
+  .player-chrome {
+    padding-left: 4vw;
+    padding-right: 4vw;
+  }
+  .player-top {
+    padding-top: 3vh;
+  }
+  .player-bottom {
+    padding-bottom: 3vh;
+  }
 }

@@ -128,6 +128,15 @@ export default function PlayerPage() {
     } else if (event.key === 'MediaPause') {
       event.preventDefault();
       if (!video.current?.paused) player.toggle();
+    } else if (event.key === 'MediaRewind' || event.key === 'MediaTrackPrevious') {
+      event.preventDefault();
+      player.seek(-10);
+    } else if (event.key === 'MediaFastForward' || event.key === 'MediaTrackNext') {
+      event.preventDefault();
+      player.seek(10);
+    } else if (event.key === 'MediaStop') {
+      event.preventDefault();
+      back();
     } else if ((event.key === 'f' || event.key === 'F') && !inField) {
       event.preventDefault();
       void toggleFullscreen();

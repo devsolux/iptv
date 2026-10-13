@@ -244,5 +244,5 @@ github-bootstrap:
 github-allow-action: github-check ## Repo setting: read-only default GITHUB_TOKEN; allow Actions to create and approve PRs
 	gh api -X PUT repos/$(GITHUB_FULL)/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
 
-github-run-workflow: github-check ## Dispatch releases.yml: resolve deps, verify, build desktop + Android, sign; artifacts stay in Actions
+github-run-workflow: github-check ## Dispatch releases.yml: verify the committed graph, build desktop + Android, sign; artifacts stay in Actions
 	gh workflow run releases.yml --repo $(GITHUB_FULL)

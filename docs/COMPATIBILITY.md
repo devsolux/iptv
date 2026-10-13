@@ -8,6 +8,18 @@ The user explicitly requested current stable packages and removal of legacy comp
 
 [Tauri documents Android 7 as its nominal minimum](https://v2.tauri.app/distribute/google-play/); that does not certify this application or every old device/WebView combination. The first device gate is launch + UI rendering + remote input + native playback, not a successful APK build.
 
+## Measures for older Fire OS WebViews
+
+Amazon publishes no Chromium version per Fire OS release, and the Silk browser build does not describe Amazon WebView, so the only reliable number is the `navigator.userAgent` reported by the WebView on the device itself. This source therefore avoids features that would exclude a whole WebView generation for little gain:
+
+- The frontend build lowers syntax to Chromium 84 / Safari 14 (`vite.config.ts`). No polyfills are added, so the runtime must still provide ES2020 built-ins, `ResizeObserver` and `matchMedia`.
+- Own styles avoid `:has()`, the `inset` shorthand, `backdrop-filter` and `Array.prototype.at`; flex `gap` (Chromium 84) remains the practical CSS floor. Tailwind 4 is imported only as a layered theme and no utility class is used in markup, so its Chromium 111 floor applies to nothing that is rendered.
+- Remote behaviour: entering a page on a screen without hover focuses the first control instead of the search field, so the on-screen keyboard does not open by itself; Back first leaves a text field; the Menu key opens channel actions; the desktop player maps the rewind, fast-forward and stop media keys; the native Media3 dialog handles rewind, fast-forward and stop as well.
+- Focus is drawn with the app's own rings (a strong ring on buttons and cards, an accent border on text fields and selects) rather than the WebView default.
+- On screens without hover wider than 1100 px, pages and the player chrome keep a 3–4% margin for TV overscan.
+
+Ionic 9 components keep their own browser requirements; those are not downleveled. None of this has been measured on Fire OS 6/7/8 hardware.
+
 ## Required physical test targets
 
 | Target | Representative software/ABI | Delivery status |

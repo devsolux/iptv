@@ -1,15 +1,15 @@
 # IPTV / com.devsolux.iptv
-# Only this workflow is required in addition to the existing IPTV repository.
+# Release packaging for the committed, verified dependency graph.
 #
-# Latest-version policy:
-# - Actions use the latest stable releases checked on 2026-10-13.
-# - Resolve current Node, npm, stable Rust and application dependencies ONCE
-#   through the existing bootstrap script. All builders consume that same
-#   exact manifest/lockfile snapshot. No changes are committed or pushed.
-# - Tauri remains on major 2. Its generated host owns AGP/Kotlin/Gradle versions;
-#   do not independently upgrade those plugins inside a release workflow.
-# - Java 25 uses its latest patch (LTS supported by the generated Gradle 9.6+).
-#   Java 27 requires Gradle 9.8+: blindly selecting it breaks the current host.
+# Policy:
+# - Every job installs exactly what the repository pins: .node-version, rust-toolchain.toml,
+#   package-lock.json and src-tauri/Cargo.lock. Nothing is resolved or upgraded in CI; a
+#   missing or stale lock fails `node scripts/project.mjs release` instead of producing a
+#   different build. Dependency upgrades are a deliberate `make bootstrap` commit.
+# - Actions are pinned to the commit of their latest stable release (checked 2026-10-13).
+# - Runner images are pinned (ubuntu-24.04, macos-15, windows-2025) so system packages stay known.
+# - Tauri remains on major 2 and generates the Android host; AGP, Kotlin and Gradle versions
+#   come from it. The runner provides Temurin JDK 21, the LTS accepted by current AGP/Gradle.
 #
 # Signing:
 # - Cosign uses GitHub OIDC: NO COSIGN_PRIVATE_KEY or long-lived PAT is needed.
@@ -54,26 +54,29 @@ env:
 
 jobs:
   prepare:
-    name: Resolve one latest-stable build snapshot
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: Validate identity, pins and the release target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       commit: ${{ steps.identity.outputs.commit }}
       version: ${{ steps.identity.outputs.version }}
       tag: ${{ steps.identity.outputs.tag }}
       release_id: ${{ steps.identity.outputs.release_id }}
-      node: ${{ steps.snapshot.outputs.node }}
-      npm: ${{ steps.snapshot.outputs.npm }}
-      rust: ${{ steps.snapshot.outputs.rust }}
       cosign: ${{ steps.cosign.outputs.version }}
-      snapshot_sha256: ${{ steps.snapshot.outputs.sha256 }}
-      snapshot_artifact: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Check out the triggering commit, never the default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Enforce exact pins and committed lockfiles
+        run: node scripts/project.mjs release
 
       - name: Validate identity, release tag and publication policy
         id: identity
@@ -111,14 +114,10 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for key, value in dict(commit=commit, version=pkg['version'], tag=tag, release_id=release_id).items():
                   output.write(f'{key}={value}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f"## IPTV {pkg['version']}\nCommit: `{commit}`\n\n")
+              summary.write('Built from the committed lockfiles, `.node-version` and `rust-toolchain.toml`.\n')
           PY
-
-      - name: Install current stable Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: current
-          check-latest: true
-          package-manager-cache: false
 
       - name: Resolve current stable Cosign, not the installer's older default
         id: cosign
@@ -140,136 +139,37 @@ jobs:
               output.write(f'version={version}\n')
           PY
 
-      - name: Resolve exact dependency versions through the existing bootstrap
-        run: |
-          set -euo pipefail
-          npm install --global npm@latest
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          # Bootstrap preflight must not attempt the archive's old Rust pin.
-          RUSTUP_TOOLCHAIN=stable make bootstrap
-          make verify-release
-
-      - name: Freeze manifests, locks and tool versions for every platform
-        id: snapshot
-        env:
-          COSIGN_VERSION: ${{ steps.cosign.outputs.version }}
-        run: |
-          python - <<'PY'
-          import hashlib, json, os, pathlib, subprocess, tarfile
-          root = pathlib.Path('.')
-          node = subprocess.check_output(['node', '-p', 'process.versions.node'], text=True).strip()
-          npm = subprocess.check_output(['npm', '--version'], text=True).strip()
-          report = json.loads((root / 'docs/dependencies-resolved.json').read_text())
-          report['build'] = {
-              'sourceCommit': os.environ['GITHUB_SHA'],
-              'workflowRef': os.environ['GITHUB_WORKFLOW_REF'],
-              'workflowSha': os.environ['GITHUB_WORKFLOW_SHA'],
-              'runId': os.environ['GITHUB_RUN_ID'],
-              'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
-              'node': node, 'npm': npm, 'cosign': os.environ['COSIGN_VERSION'],
-              'policy': 'Latest stable direct dependencies resolved once in CI; repository not modified.',
-          }
-          (root / 'docs/dependencies-resolved.json').write_text(json.dumps(report, indent=2) + '\n')
-          files = [
-              'package.json', 'package-lock.json', 'rust-toolchain.toml',
-              'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock',
-              'src-tauri/plugins/player/android/build.gradle.kts',
-              'docs/dependencies-resolved.json',
-          ]
-          archive = pathlib.Path(os.environ['RUNNER_TEMP']) / 'build-inputs.tar.gz'
-          with tarfile.open(archive, 'w:gz') as tar:
-              for name in files:
-                  if not (root / name).is_file() or (root / name).is_symlink():
-                      raise SystemExit(f'Missing/non-regular build input: {name}')
-                  tar.add(root / name, arcname=name, recursive=False)
-          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              for key, value in dict(node=node, npm=npm, rust=report['rust'], sha256=digest).items():
-                  output.write(f'{key}={value}\n')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write(f"## IPTV\nCommit: `{os.environ['GITHUB_SHA']}`\n\n")
-              summary.write(f"Node `{node}`, npm `{npm}`, Rust `{report['rust']}`, Cosign `{os.environ['COSIGN_VERSION']}`.\n\n")
-              summary.write(f'Build-input SHA-256: `{digest}`. All builders use this snapshot.\n')
-          PY
-
-      - name: Retain the exact build-input snapshot
-        id: upload
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: build-inputs-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/build-inputs.tar.gz
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
-
   verify:
-    name: Verify the resolved application before packaging
+    name: Verify the committed application before packaging
     needs: prepare
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
-          path: ${{ runner.temp }}/build-inputs
-      - name: Restore the verified build-input snapshot
-        env:
-          EXPECTED_SHA256: ${{ needs.prepare.outputs.snapshot_sha256 }}
-        run: &restore_inputs |
-          set -euo pipefail
-          python - <<'PY'
-          import hashlib, os, pathlib, tarfile
-          archive = pathlib.Path(os.environ['RUNNER_TEMP']) / 'build-inputs/build-inputs.tar.gz'
-          if hashlib.sha256(archive.read_bytes()).hexdigest() != os.environ['EXPECTED_SHA256']:
-              raise SystemExit('Build-input snapshot integrity check failed.')
-          allowed = {
-              'package.json', 'package-lock.json', 'rust-toolchain.toml',
-              'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock',
-              'src-tauri/plugins/player/android/build.gradle.kts', 'docs/dependencies-resolved.json',
-          }
-          with tarfile.open(archive, 'r:gz') as tar:
-              members = tar.getmembers()
-              if len(members) != len(allowed) or {m.name for m in members} != allowed:
-                  raise SystemExit('Unexpected build-input archive layout.')
-              for member in members:
-                  if not member.isfile() or member.size > 32 * 1024 * 1024:
-                      raise SystemExit('Invalid build-input archive member.')
-                  destination = pathlib.Path(member.name)
-                  if destination.is_symlink() or any(p.is_symlink() for p in destination.parents):
-                      raise SystemExit('Refusing a symlinked build-input destination.')
-                  with tar.extractfile(member) as source:
-                      destination.write_bytes(source.read())
-          PY
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ needs.prepare.outputs.node }}
+          node-version-file: .node-version
           package-manager-cache: false
       - name: Install Linux native prerequisites
-        run: &linux_prerequisites |
+        run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libssl-dev libgtk-3-dev \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libxdo-dev patchelf file rpm xdg-utils
-      - name: Install the frozen dependency graph
-        env:
-          NPM_VERSION: ${{ needs.prepare.outputs.npm }}
-          RUST_VERSION: ${{ needs.prepare.outputs.rust }}
-        run: &install_graph |
-          set -euo pipefail
-          npm install --global "npm@$NPM_VERSION"
-          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
-          node scripts/project.mjs locks
-          npm ci
-          cargo fetch --manifest-path src-tauri/Cargo.toml --locked
-      - name: Run existing project checks and browser tests
+      - name: Install the pinned toolchain and the committed dependency graph
         run: |
           set -euo pipefail
-          make verify-release
+          rustup toolchain install
+          node scripts/project.mjs release
+          npm ci
+          cargo fetch --manifest-path src-tauri/Cargo.toml --locked
+      - name: Run the project checks, SQL/tooling suites and browser tests
+        run: |
+          set -euo pipefail
           make build-web
           make check
           make test-sql test-tools
@@ -285,17 +185,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform: linux-x86_64
             target: x86_64-unknown-linux-gnu
             targets: x86_64-unknown-linux-gnu
             bundles: appimage,deb,rpm
-          - os: windows-latest
+          - os: windows-2025
             platform: windows-x86_64
             target: x86_64-pc-windows-msvc
             targets: x86_64-pc-windows-msvc
             bundles: nsis,msi
-          - os: macos-latest
+          - os: macos-15
             platform: macos-universal
             target: universal-apple-darwin
             targets: aarch64-apple-darwin x86_64-apple-darwin
@@ -305,21 +205,18 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
-          path: ${{ runner.temp }}/build-inputs
-      - name: Restore the verified build-input snapshot
-        env:
-          EXPECTED_SHA256: ${{ needs.prepare.outputs.snapshot_sha256 }}
-        run: *restore_inputs
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ needs.prepare.outputs.node }}
+          node-version-file: .node-version
           package-manager-cache: false
       - name: Install Linux native prerequisites
         if: runner.os == 'Linux'
-        run: *linux_prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libssl-dev libgtk-3-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev patchelf file rpm xdg-utils
       - name: Ensure the Windows MSI build prerequisite is available
         if: runner.os == 'Windows'
         shell: pwsh
@@ -330,11 +227,13 @@ jobs:
             $result = Add-WindowsCapability -Online -Name $capability.Name
             if ($result.RestartNeeded) { throw 'VBScript installation requires a runner restart.' }
           }
-      - name: Install the frozen dependency graph
-        env:
-          NPM_VERSION: ${{ needs.prepare.outputs.npm }}
-          RUST_VERSION: ${{ needs.prepare.outputs.rust }}
-        run: *install_graph
+      - name: Install the pinned toolchain and the committed dependency graph
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          node scripts/project.mjs release
+          npm ci
+          cargo fetch --manifest-path src-tauri/Cargo.toml --locked
       - name: Build native installers through the existing Tauri entry point
         env:
           TARGET: ${{ matrix.target }}
@@ -346,7 +245,6 @@ jobs:
           set -euo pipefail
           read -r -a targets <<< "$RUST_TARGETS"
           rustup target add "${targets[@]}"
-          node scripts/project.mjs release
           # Tauri invokes beforeBuildCommand; do not build the frontend twice.
           npm run tauri -- build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
 
@@ -393,7 +291,7 @@ jobs:
   android:
     name: Build Android / Fire OS ${{ matrix.arch }}
     needs: [prepare, verify]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -410,29 +308,22 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
-          path: ${{ runner.temp }}/build-inputs
-      - name: Restore the verified build-input snapshot
-        env:
-          EXPECTED_SHA256: ${{ needs.prepare.outputs.snapshot_sha256 }}
-        run: *restore_inputs
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ needs.prepare.outputs.node }}
+          node-version-file: .node-version
           package-manager-cache: false
-      - name: Install the latest Java 25 patch supported by the generated host
+      - name: Install Temurin JDK 21 (the LTS accepted by the generated AGP/Gradle host)
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: '25'
-          check-latest: true
-      - name: Install the frozen dependency graph
-        env:
-          NPM_VERSION: ${{ needs.prepare.outputs.npm }}
-          RUST_VERSION: ${{ needs.prepare.outputs.rust }}
-        run: *install_graph
+          java-version: '21'
+      - name: Install the pinned toolchain and the committed dependency graph
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          node scripts/project.mjs release
+          npm ci
+          cargo fetch --manifest-path src-tauri/Cargo.toml --locked
       - name: Install latest stable Android SDK tooling and NDK
         run: |
           set -euo pipefail
@@ -486,7 +377,6 @@ jobs:
           ANDROID_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          node scripts/project.mjs release
           npm run tauri -- android build --ci --target "$ANDROID_ARCH" --apk --aab -- --locked
 
       - name: Collect ABI-verified Android packages and optionally sign for installation
@@ -567,7 +457,7 @@ jobs:
   sign:
     name: Keyless Sigstore signing and verification
     needs: [prepare, desktop, android]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -582,17 +472,10 @@ jobs:
           pattern: packages-*
           path: incoming
           merge-multiple: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.prepare.outputs.snapshot_artifact }}
-          path: ${{ runner.temp }}/build-inputs
-      - name: Assemble the complete platform set and exact build inputs
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          EXPECTED_SHA256: ${{ needs.prepare.outputs.snapshot_sha256 }}
+      - name: Assemble the complete platform set
         run: |
           python - <<'PY'
-          import hashlib, os, pathlib, re, shutil
+          import os, pathlib, re, shutil
           incoming, out = pathlib.Path('incoming'), pathlib.Path('release-assets')
           expected = {f"packages-{name}" for name in [
               'linux-x86_64', 'windows-x86_64', 'macos-universal', 'android-armv7', 'android-aarch64',
@@ -612,10 +495,6 @@ jobs:
                   count += 1
               if count != (3 if 'linux-x86_64' in directory.name else 2):
                   raise SystemExit(f'Unexpected package count in {directory.name}.')
-          archive = pathlib.Path(os.environ['RUNNER_TEMP']) / 'build-inputs/build-inputs.tar.gz'
-          if hashlib.sha256(archive.read_bytes()).hexdigest() != os.environ['EXPECTED_SHA256']:
-              raise SystemExit('Build-input archive digest mismatch.')
-          shutil.copyfile(archive, out / f"IPTV-{os.environ['VERSION']}-build-inputs.tar.gz")
           PY
       - name: Install the resolved latest stable Cosign with installer verification
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -630,7 +509,7 @@ jobs:
           cd release-assets
           # Snapshot the input set BEFORE creating any .sigstore.json bundles.
           mapfile -d '' assets < <(find . -maxdepth 1 -type f -name 'IPTV-*' -printf '%f\0' | LC_ALL=C sort -z)
-          ((${#assets[@]} == 12)) || { echo 'Expected 11 platform packages and one build-input archive.' >&2; exit 1; }
+          ((${#assets[@]} == 11)) || { echo 'Expected 11 platform packages.' >&2; exit 1; }
           sha256sum -- "${assets[@]}" > SHA256SUMS
           for asset in "${assets[@]}" SHA256SUMS; do
             cosign sign-blob --yes --bundle "$asset.sigstore.json" "$asset"
@@ -645,7 +524,7 @@ jobs:
             printf '## Signature verification\n\n'
             printf 'Identity: `%s`\n\n' "$CERTIFICATE_IDENTITY"
             printf 'Issuer: `https://token.actions.githubusercontent.com`\n\n'
-            printf 'Every package, build-input snapshot and SHA256SUMS has a verified Sigstore bundle.\n'
+            printf 'Every package and SHA256SUMS has a verified Sigstore bundle bound to this workflow and commit.\n'
             printf 'These signatures do not grant operating-system trust or certify runtime compatibility.\n'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Retain the signed release set for both trigger types
@@ -662,7 +541,7 @@ jobs:
     name: Attach verified assets to the published GitHub Release
     if: github.event_name == 'release'
     needs: [prepare, sign]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
@@ -723,7 +602,7 @@ jobs:
                   raise SystemExit('Malformed or duplicate checksum manifest entry.')
               checksums[match[2]] = match[1]
           allowed = set(checksums) | {name + '.sigstore.json' for name in checksums} | {'SHA256SUMS', 'SHA256SUMS.sigstore.json'}
-          if len(checksums) != 12 or {p.name for p in root.iterdir()} != allowed:
+          if len(checksums) != 11 or {p.name for p in root.iterdir()} != allowed:
               raise SystemExit('The release file set does not match the signed checksum manifest.')
           files = sorted(root.iterdir())
           if any(not p.is_file() or p.is_symlink() or not 0 < p.stat().st_size < 2 * 1024**3 for p in files):

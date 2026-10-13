@@ -68,3 +68,14 @@ test('player page shows the icon control bar and a readable error in the preview
   await page.getByRole('button', { name: 'Back to channels' }).click();
   await expect(page).toHaveURL(/#\/channels$/);
 });
+test('Back leaves the search field before it offers to close the application', async ({ page }) => {
+  await page.goto('/');
+  const search = page.getByPlaceholder('Search your channels');
+  await search.focus();
+  await expect(search).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(search).not.toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Close IPTV?' })).toBeVisible();
+});
