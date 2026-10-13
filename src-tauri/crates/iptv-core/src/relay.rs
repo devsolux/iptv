@@ -40,6 +40,7 @@ struct Session {
     cancel: watch::Sender<bool>,
     requests: Arc<Semaphore>,
     root: String,
+    kind: String,
 }
 impl Session {
     fn register(&self, base: &str, target: &str) -> Result<String> {
@@ -236,6 +237,7 @@ impl Relay {
             cancel,
             requests: Arc::new(Semaphore::new(6)),
             root: root_token,
+            kind: kind.to_owned(),
         });
         let url = session.register(&self.inner.base, root.as_str())?;
         let mut current = self.inner.current.lock().map_err(|_| Error::Storage)?;
@@ -410,6 +412,27 @@ async fn template(
         .await
         .unwrap_or_else(public_http_error)
 }
+/// Resources whose names mark them as playlists. Upstream playlist requests never carry a
+/// Range header and never use HEAD: many stream hosts answer those probes with a two-byte
+/// 206, 405 or 5xx, and native players report any failure of the main resource as an
+/// unsupported format.
+pub fn playlist_like(url: &Url) -> bool {
+    let path = url.path().to_ascii_lowercase();
+    path.ends_with(".m3u8") || path.ends_with(".m3u") || path.ends_with(".mpd")
+}
+/// The manifest family a response body starts with, if any.
+pub fn manifest_prefix(text: &str) -> Option<&'static str> {
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    if text.starts_with("#EXTM3U") {
+        Some("hls")
+    } else if text.contains("<MPD") {
+        Some("dash")
+    } else {
+        None
+    }
+}
+type ByteStream =
+    std::pin::Pin<Box<dyn futures_util::Stream<Item = reqwest::Result<Bytes>> + Send>>;
 async fn dispatch(
     state: HttpState,
     sid: String,
@@ -432,85 +455,137 @@ async fn dispatch(
         .get("range")
         .map(|v| v.to_str().map_err(|_| Error::Policy))
         .transpose()?;
-    let upstream = tokio::select! {
-        _=cancellation.changed()=>return Err(Error::Cancelled),
-        value=session.network.get(url,range,method==Method::HEAD)=>value?,
+    let manifest_role = (rid == session.root && matches!(session.kind.as_str(), "hls" | "dash"))
+        || playlist_like(&url);
+    // HEAD is answered from a GET; a byte range is only forwarded for media resources.
+    let mut attempt_range = if manifest_role { None } else { range };
+    let (status, final_url, upstream_headers, prefix, remainder, incoming) = loop {
+        let upstream = tokio::select! {
+            _ = cancellation.changed() => return Err(Error::Cancelled),
+            value = session.network.get(url.clone(), attempt_range, false) => value?,
+        };
+        let status =
+            StatusCode::from_u16(upstream.status().as_u16()).map_err(|_| Error::Network)?;
+        let final_url = upstream.url().clone();
+        let upstream_headers = upstream.headers().clone();
+        let mut incoming: ByteStream = Box::pin(upstream.bytes_stream());
+        let mut prefix = Vec::with_capacity(512);
+        let mut remainder = None;
+        if status.is_success() {
+            while prefix.len() < 512 {
+                let next = tokio::select! {
+                    _ = cancellation.changed() => return Err(Error::Cancelled),
+                    value = incoming.next() => value,
+                };
+                match next {
+                    Some(Ok(bytes)) => {
+                        let n = bytes.len().min(512 - prefix.len());
+                        prefix.extend_from_slice(&bytes[..n]);
+                        if n < bytes.len() {
+                            remainder = Some(bytes.slice(n..));
+                            break;
+                        }
+                    }
+                    Some(Err(_)) => return Err(Error::Network),
+                    None => break,
+                }
+            }
+        }
+        let content_type = upstream_headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let looks_like_manifest = content_type.contains("mpegurl")
+            || content_type.contains("dash+xml")
+            || playlist_like(&final_url)
+            || manifest_prefix(&String::from_utf8_lossy(&prefix)).is_some();
+        if attempt_range.is_some() && looks_like_manifest && status == StatusCode::PARTIAL_CONTENT {
+            // The host honoured a byte range on a playlist; fetch the whole document instead.
+            attempt_range = None;
+            continue;
+        }
+        break (
+            status,
+            final_url,
+            upstream_headers,
+            prefix,
+            remainder,
+            incoming,
+        );
     };
-    let status = StatusCode::from_u16(upstream.status().as_u16()).map_err(|_| Error::Network)?;
-    let final_url = upstream.url().clone();
-    let upstream_headers = upstream.headers().clone();
     let content_type = upstream_headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream");
-    let mut incoming = upstream.bytes_stream();
-    let mut prefix = Vec::with_capacity(512);
-    let mut remainder = None;
-    if method != Method::HEAD && status.is_success() {
-        while prefix.len() < 512 {
-            let next = tokio::select! {_=cancellation.changed()=>return Err(Error::Cancelled),value=incoming.next()=>value};
-            match next {
-                Some(Ok(bytes)) => {
-                    let n = bytes.len().min(512 - prefix.len());
-                    prefix.extend_from_slice(&bytes[..n]);
-                    if n < bytes.len() {
-                        remainder = Some(bytes.slice(n..));
-                        break;
-                    }
-                }
-                Some(Err(_)) => return Err(Error::Network),
-                None => break,
-            }
-        }
-    }
+        .unwrap_or("application/octet-stream")
+        .to_ascii_lowercase();
     let text = String::from_utf8_lossy(&prefix);
+    let detected = manifest_prefix(&text);
     let hls = content_type.contains("mpegurl")
         || final_url.path().to_ascii_lowercase().ends_with(".m3u8")
-        || text
-            .trim_start_matches('\u{feff}')
-            .trim_start()
-            .starts_with("#EXTM3U");
-    let dash = content_type.contains("dash+xml")
-        || final_url.path().to_ascii_lowercase().ends_with(".mpd")
-        || text.contains("<MPD");
+        || detected == Some("hls");
+    let dash = !hls
+        && (content_type.contains("dash+xml")
+            || final_url.path().to_ascii_lowercase().ends_with(".mpd")
+            || detected == Some("dash"));
     let buffered =
         std::iter::once(Ok::<Bytes, reqwest::Error>(Bytes::from(prefix))).chain(remainder.map(Ok));
     let mut stream = futures_util::stream::iter(buffered).chain(incoming);
-    let mut response = if method != Method::HEAD
-        && (hls || dash)
-        && status != StatusCode::RANGE_NOT_SATISFIABLE
-    {
-        let mut data = Vec::with_capacity(16 * 1024);
-        loop {
-            let chunk = tokio::select! {_=cancellation.changed()=>return Err(Error::Cancelled),value=stream.next()=>value};
-            match chunk {
-                Some(Ok(bytes)) => {
-                    if data.len() + bytes.len() > MAX_MANIFEST_BYTES {
-                        return Err(Error::Limit);
+    let mut response = if (hls || dash) && status.is_success() {
+        let manifest_type = HeaderValue::from_static(if hls {
+            "application/vnd.apple.mpegurl"
+        } else {
+            "application/dash+xml"
+        });
+        if method == Method::HEAD {
+            drop(permit);
+            let mut response = StatusCode::OK.into_response();
+            response.headers_mut().insert("content-type", manifest_type);
+            response
+        } else {
+            let mut data = Vec::with_capacity(16 * 1024);
+            loop {
+                let chunk = tokio::select! {
+                    _ = cancellation.changed() => return Err(Error::Cancelled),
+                    value = stream.next() => value,
+                };
+                match chunk {
+                    Some(Ok(bytes)) => {
+                        if data.len() + bytes.len() > MAX_MANIFEST_BYTES {
+                            return Err(Error::Limit);
+                        }
+                        data.extend_from_slice(&bytes);
                     }
-                    data.extend_from_slice(&bytes);
+                    Some(Err(_)) => return Err(Error::Network),
+                    None => break,
                 }
-                Some(Err(_)) => return Err(Error::Network),
-                None => break,
+            }
+            let input = String::from_utf8(data).map_err(|_| Error::Unsupported)?;
+            let register = |url: &str| session.register(&state.inner.base, url);
+            let rewritten = if hls {
+                manifest::hls(&input, &final_url, register)?
+            } else {
+                manifest::dash(&input, &final_url, register)?
+            };
+            drop(permit);
+            let mut response = (StatusCode::OK, rewritten).into_response();
+            response.headers_mut().insert("content-type", manifest_type);
+            response
+        }
+    } else if method == Method::HEAD {
+        drop(permit);
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = status;
+        for name in [
+            "content-type",
+            "content-length",
+            "content-range",
+            "accept-ranges",
+        ] {
+            if let Some(value) = upstream_headers.get(name) {
+                response.headers_mut().insert(name, value.clone());
             }
         }
-        let input = String::from_utf8(data).map_err(|_| Error::Unsupported)?;
-        let register = |url: &str| session.register(&state.inner.base, url);
-        let rewritten = if hls {
-            manifest::hls(&input, &final_url, register)?
-        } else {
-            manifest::dash(&input, &final_url, register)?
-        };
-        drop(permit);
-        let mut response = (StatusCode::OK, rewritten).into_response();
-        response.headers_mut().insert(
-            "content-type",
-            HeaderValue::from_static(if hls {
-                "application/vnd.apple.mpegurl"
-            } else {
-                "application/dash+xml"
-            }),
-        );
         response
     } else {
         let stream = futures_util::stream::unfold(

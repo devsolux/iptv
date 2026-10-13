@@ -96,6 +96,8 @@ export function usePlayer(
     let mediaRecoveries = 0;
     let triedMpegts = false;
     let lastTick = 0;
+    /** Message to prefer when the native fallback fails after an engine already diagnosed it. */
+    let pendingMessage: string | null = null;
     setState({ ...initial, muted: element.muted, volume: element.volume });
     const patch = (change: Partial<PlayerState>) => {
       if (!disposed) setState((current) => ({ ...current, ...change }));
@@ -193,6 +195,10 @@ export function usePlayer(
     const nativeError = () => {
       const error = element.error;
       if (error?.code === 1) return; // Aborted by our own load() while switching.
+      if (pendingMessage) {
+        fail(pendingMessage);
+        return;
+      }
       if (error?.code === 4 && session?.kind === 'progressive' && !triedMpegts && session) {
         // WebKit cannot play raw MPEG-TS in a <video>; remux it through MSE instead.
         triedMpegts = true;
@@ -230,20 +236,27 @@ export function usePlayer(
           return;
         }
         if (prepared.kind === 'hls') {
-          if (element.canPlayType('application/vnd.apple.mpegurl')) {
+          // hls.js first: it tolerates sloppy playlists, reports why a stream fails and plays
+          // HEVC in MPEG-TS; the WebView's native HLS player is the fallback for codecs its
+          // media source cannot take.
+          const nativeHls = element.canPlayType('application/vnd.apple.mpegurl') !== '';
+          let nativeTried = !nativeHls;
+          const startNative = () => {
+            nativeTried = true;
+            releaseEngine();
             element.src = prepared.url;
             releaseEngine = () => {
               element.removeAttribute('src');
               element.load();
             };
             autoplay();
+          };
+          const { default: Hls } = await import('hls.js');
+          if (disposed) return;
+          if (!Hls.isSupported()) {
+            if (nativeHls) startNative();
+            else fail('HLS playback is unavailable in this system WebView.');
           } else {
-            const { default: Hls } = await import('hls.js');
-            if (disposed) return;
-            if (!Hls.isSupported()) {
-              fail('HLS playback is unavailable in this system WebView.');
-              return;
-            }
             const hls = new Hls({
               enableWorker: true,
               lowLatencyMode: false,
@@ -251,6 +264,9 @@ export function usePlayer(
               maxMaxBufferLength: 20,
               maxBufferSize: 16 * 1024 * 1024,
               backBufferLength: 5,
+              manifestLoadingMaxRetry: 2,
+              levelLoadingMaxRetry: 3,
+              fragLoadingMaxRetry: 4,
               debug: false,
             });
             releaseEngine = () => {
@@ -277,10 +293,32 @@ export function usePlayer(
             );
             hls.on(Hls.Events.ERROR, (_event, data) => {
               if (!data.fatal || disposed) return;
-              if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries++ < 2)
+              const detail = String(data.details);
+              if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                // The relay answers 415 for manifests it cannot rewrite (DRM, variables) and 403
+                // for addresses the source policy rejects; anything else is the upstream host.
+                const code = data.response?.code ?? 0;
+                if (code === 415) fail(FORMAT);
+                else if (code === 403)
+                  fail(
+                    'A stream address was blocked by this source’s network policy. Check the source’s HTTP and certificate settings.',
+                  );
+                else fail(LOST);
+                return;
+              }
+              const codecProblem = /codec|parsing/i.test(detail);
+              if (
+                data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+                !codecProblem &&
+                mediaRecoveries++ < 2
+              ) {
                 hls.recoverMediaError();
-              else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) fail(LOST);
-              else fail(CODEC);
+                return;
+              }
+              if (!nativeTried) {
+                pendingMessage = codecProblem ? CODEC : FORMAT;
+                startNative();
+              } else fail(codecProblem ? CODEC : FORMAT);
             });
             trackControls.current = {
               audio: (index) => {

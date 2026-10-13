@@ -103,6 +103,9 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
 17. **Stream clients.** `MediaNetwork` and `get_blocking` send `DEFAULT_USER_AGENT`, speak
     HTTP/1.1, keep a per-session cookie jar and honour `accept_invalid_certs` only when the source
     consented. Playback errors surface as `Error::Stream` / `Error::StreamPolicy`, never raw text.
+    The relay never forwards `Range` or HEAD upstream for playlist resources (`playlist_like`,
+    `manifest_prefix` in `relay.rs`); `live_relay_audit_of_public_streams` is the audit to re-run
+    after touching `dispatch`.
 18. **WebView floor.** Keep the frontend within Chromium 84: no `:has()`, `inset`, `backdrop-filter`
     or `Array.prototype.at` in own code, and keep `build.target` in `vite.config.ts` at
     `chrome84`/`safari14`. See `docs/COMPATIBILITY.md` before using a newer platform feature.

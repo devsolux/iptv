@@ -30,7 +30,7 @@
       "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
       "result": "passed"
     },
-    { "command": "cargo test --workspace --locked", "result": "passed", "tests": 22, "ignored": 3 },
+    { "command": "cargo test --workspace --locked", "result": "passed", "tests": 23, "ignored": 4 },
     { "command": "python3 -m unittest discover -s tests/sql", "result": "passed", "tests": 12 },
     { "command": "python3 -m unittest discover -s tests/tools", "result": "passed", "tests": 7 },
     { "command": "npm run build:web", "result": "passed" },
@@ -46,6 +46,12 @@
       "result": "passed",
       "network": "iptv-org.github.io and a public stream host",
       "observed": "HLS stream relayed through the loopback relay; manifest rewritten and first segment fetched"
+    },
+    {
+      "command": "cargo test -p iptv-core --test core -- --ignored live_relay_audit",
+      "result": "passed",
+      "network": "iptv-org.github.io and 36 public stream hosts",
+      "observed": "30 reachable streams answer 200 to plain, ranged and HEAD playlist requests through the relay; 6 upstream hosts unreachable"
     },
     {
       "command": "cargo test -p iptv-core --test core -- --ignored live_core",

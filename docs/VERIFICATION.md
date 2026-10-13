@@ -93,6 +93,18 @@ Channel artwork is centred in its card; text fields and selects draw an accent b
 
 Not executed: the Kotlin change (no local Android toolchain), any Fire OS device, and the hover-less focus behaviour on a real remote.
 
+## Stream audit: "format not supported" on iptv-org streams (October 13, 2026)
+
+A new ignored audit test (`live_relay_audit_of_public_streams`) drives the relay the way a native player does for 36 streams from the German, Turkish and US official playlists: plain, ranged (`Range: bytes=0-1`) and HEAD requests for the root playlist, then the first variant playlist and media segment, plus the advertised `CODECS`. An ffprobe pass over the same upstream streams showed H.264/AAC everywhere except one MPEG-2/MP2 stream that no browser can decode; codecs were not the cause.
+
+| Finding | Before | After |
+| --- | --- | --- |
+| Ranged root playlist request through the relay | 21 of 30 reachable streams answered 502: the host honoured the range with a two-byte 206 and the relay tried to parse it as a manifest | 30 of 30 answer 200 |
+| HEAD root playlist request through the relay | 4 of 30 answered 502 (hosts rejecting HEAD) | 30 of 30 answer 200 |
+| Unreachable upstream hosts (offline, 403, timeouts) | 6 of 36 | 6 of 36, reported as a stream error and subject to variant fallback |
+
+WebKit's native HLS player sends exactly those probes and reports any failure of the main resource as "format not supported", which produced the reported message. The relay now fetches playlist-like resources whole, re-fetches a ranged response that turns out to be a playlist, and answers HEAD from a GET. The desktop player uses hls.js first with native HLS as the fallback and maps relay and upstream failures to distinct messages. Checks: clippy, 23 Rust tests, 16 unit tests, typecheck, Biome, web build and 7 browser specifications pass; the audit and the other three live checks were run once more against the live hosts. Not executed: the native application against the rebuilt engine order.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

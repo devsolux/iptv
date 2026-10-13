@@ -1234,3 +1234,191 @@ async fn live_core_imports_an_official_playlist_and_serves_artwork() {
     );
     core.lock();
 }
+/// Audit: drives the relay the way a native player does for a sample of public streams and
+/// prints one line per stream. Run with `--ignored --nocapture`; it asserts nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "audit: requires network access to iptv-org.github.io and public stream hosts"]
+async fn live_relay_audit_of_public_streams() {
+    let candidates = tokio::task::spawn_blocking(|| {
+        let policy = NetworkPolicy::public(iptv_org::DEFAULT_PLAYLIST_BASE).unwrap();
+        let mut streams = vec![];
+        for country in ["de", "tr", "us"] {
+            let response = policy
+                .get_blocking(
+                    &format!(
+                        "{}/countries/{country}.m3u",
+                        iptv_org::DEFAULT_PLAYLIST_BASE
+                    ),
+                    &BTreeMap::new(),
+                )
+                .unwrap();
+            let mut taken = 0;
+            m3u::parse_with(BufReader::new(response), true, |channel| {
+                if taken < 12 {
+                    streams.push((channel.name, channel.stream));
+                    taken += 1;
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        streams
+    })
+    .await
+    .unwrap();
+    let mut source = org_source(org_config(&["DE"], CountryMode::CoverageStrict));
+    source.allow_http = true;
+    let relay = iptv_core::relay::Relay::bind().await.unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .unwrap();
+    let mut summary = std::collections::BTreeMap::<String, usize>::new();
+    let first_line = |text: &str| {
+        text.lines()
+            .find(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .map(str::to_owned)
+    };
+    let kind_of = |bytes: &[u8]| {
+        if bytes.first() == Some(&0x47) {
+            "ts"
+        } else if bytes.len() > 8
+            && (&bytes[4..8] == b"ftyp" || bytes.windows(4).any(|w| w == b"moof"))
+        {
+            "fmp4"
+        } else {
+            "?"
+        }
+    };
+    for (name, secret) in candidates {
+        let host = Url::parse(&secret.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .unwrap_or_default();
+        let prepared = match relay.start(secret, &source).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                eprintln!("audit | {name} | {host} | start: {error}");
+                *summary.entry(format!("start: {error}")).or_default() += 1;
+                continue;
+            }
+        };
+        let (status, body) = match client.get(&prepared.url).send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                (status, response.text().await.unwrap_or_default())
+            }
+            Err(error) => {
+                eprintln!("audit | {name} | {host} | root transport: {error}");
+                continue;
+            }
+        };
+        let ranged = client
+            .get(&prepared.url)
+            .header("range", "bytes=0-1")
+            .send()
+            .await
+            .map(|r| r.status().as_u16())
+            .unwrap_or(0);
+        let head = client
+            .head(&prepared.url)
+            .send()
+            .await
+            .map(|r| r.status().as_u16())
+            .unwrap_or(0);
+        let mut detail = String::new();
+        if prepared.kind == "hls" && status == 200 {
+            let master = body.contains("#EXT-X-STREAM-INF");
+            let codecs: Vec<String> = body
+                .lines()
+                .filter(|l| l.starts_with("#EXT-X-STREAM-INF"))
+                .filter_map(|l| {
+                    l.split("CODECS=\"")
+                        .nth(1)
+                        .and_then(|r| r.split('"').next())
+                        .map(str::to_owned)
+                })
+                .collect();
+            let target = body.contains("#EXT-X-TARGETDURATION");
+            let version = body.contains("#EXT-X-VERSION");
+            let mut media_status = 0;
+            let mut media_target = false;
+            let mut segment_status = 0;
+            let mut segment_kind = "-";
+            if let Some(next) = first_line(&body) {
+                let media = if master {
+                    match client.get(&next).send().await {
+                        Ok(response) => {
+                            media_status = response.status().as_u16();
+                            response.text().await.unwrap_or_default()
+                        }
+                        Err(_) => String::new(),
+                    }
+                } else {
+                    media_status = status;
+                    body.clone()
+                };
+                media_target = media.contains("#EXT-X-TARGETDURATION");
+                if let Some(segment) = first_line(&media)
+                    && let Ok(response) = client
+                        .get(&segment)
+                        .header("range", "bytes=0-1023")
+                        .send()
+                        .await
+                {
+                    segment_status = response.status().as_u16();
+                    let bytes = response.bytes().await.unwrap_or_default();
+                    segment_kind = kind_of(&bytes);
+                }
+            }
+            detail = format!(
+                "master={master} version={version} target={target}/{media_target} codecs={codecs:?} media={media_status} segment={segment_status}/{segment_kind}"
+            );
+        }
+        eprintln!(
+            "audit | {name} | {host} | kind={} root={status} range={ranged} head={head} {detail}",
+            prepared.kind
+        );
+        *summary
+            .entry(format!(
+                "kind={} root={status} range={ranged} head={head}",
+                prepared.kind
+            ))
+            .or_default() += 1;
+        relay.close(Some(&prepared.id));
+    }
+    for (key, count) in summary {
+        eprintln!("summary | {count} | {key}");
+    }
+}
+
+#[test]
+fn relay_recognizes_playlists_by_name_and_content() {
+    use iptv_core::relay::{manifest_prefix, playlist_like};
+    for url in [
+        "https://host.invalid/live/index.m3u8",
+        "https://host.invalid/list.M3U8?token=1",
+        "https://host.invalid/stream.m3u",
+        "https://host.invalid/dash/manifest.mpd",
+    ] {
+        assert!(playlist_like(&Url::parse(url).unwrap()), "{url}");
+    }
+    for url in [
+        "https://host.invalid/segment-1.ts",
+        "https://host.invalid/init.mp4",
+        "https://host.invalid/live/stream",
+    ] {
+        assert!(!playlist_like(&Url::parse(url).unwrap()), "{url}");
+    }
+    assert_eq!(
+        manifest_prefix("\u{feff}  #EXTM3U\n#EXT-X-VERSION:3"),
+        Some("hls")
+    );
+    assert_eq!(
+        manifest_prefix("<?xml version=\"1.0\"?><MPD>"),
+        Some("dash")
+    );
+    assert_eq!(manifest_prefix("#E"), None);
+    assert_eq!(manifest_prefix("\x47\x40\x00"), None);
+}
