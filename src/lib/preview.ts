@@ -65,8 +65,6 @@ export async function previewCommand(
         name: 'IPTV',
         version: '1.0.0',
         identifier: 'com.devsolux.iptv',
-        unlocked: true,
-        vaultExists: true,
         nativePlayer: false,
       };
     case 'list_sources':

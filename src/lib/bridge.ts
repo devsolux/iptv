@@ -61,8 +61,6 @@ async function call<T>(
 const empty = z.null().transform(() => undefined);
 export const api = {
   status: () => call('app_status', {}, statusSchema),
-  unlock: (passphrase: string) => call('unlock', { passphrase }, empty),
-  lock: () => call('lock', {}, empty),
   exit: () => call('exit_app', {}, empty),
   jobs: () => call('list_jobs', {}, z.array(jobSchema).max(64)),
   countries: (sourceId: string | null) =>

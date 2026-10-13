@@ -18,8 +18,6 @@ struct AppStatus {
     name: &'static str,
     version: &'static str,
     identifier: &'static str,
-    unlocked: bool,
-    vault_exists: bool,
     native_player: bool,
 }
 type Reply<T> = std::result::Result<T, PublicError>;
@@ -35,41 +33,19 @@ async fn worker<T: Send + 'static>(
         .acquire_owned()
         .await
         .map_err(|_| Error::Cancelled.public())?;
-    tokio::task::spawn_blocking(move || {
-        core.require_unlocked()?;
-        operation(core)
-    })
-    .await
-    .map_err(|_| Error::Storage.public())?
-    .map_err(|e| e.public())
+    tokio::task::spawn_blocking(move || operation(core))
+        .await
+        .map_err(|_| Error::Storage.public())?
+        .map_err(|e| e.public())
 }
 #[tauri::command]
-fn app_status(state: State<'_, AppState>) -> AppStatus {
+fn app_status() -> AppStatus {
     AppStatus {
         name: "IPTV",
         version: "1.0.0",
         identifier: "com.devsolux.iptv",
-        unlocked: state.core.vault.is_unlocked(),
-        vault_exists: state.core.vault.exists(),
         native_player: cfg!(target_os = "android"),
     }
-}
-#[tauri::command]
-async fn unlock(state: State<'_, AppState>, passphrase: String) -> Reply<()> {
-    state.core.unlock(passphrase).await.map_err(|e| e.public())
-}
-#[tauri::command]
-async fn lock(app: tauri::AppHandle, state: State<'_, AppState>) -> Reply<()> {
-    state.core.lock();
-    let active = state
-        .playback
-        .lock()
-        .map_err(|_| Error::Storage.public())?
-        .take();
-    if let Some(active) = active {
-        native_stop(app, active.session_id).await?;
-    }
-    Ok(())
 }
 #[tauri::command]
 async fn list_sources(state: State<'_, AppState>) -> Reply<Vec<Source>> {
@@ -182,11 +158,6 @@ async fn open_playback(
         .start(secret, &config)
         .await
         .map_err(|e| e.public())?;
-    // Locking during a network probe cannot accidentally unlock a new player session.
-    if let Err(error) = state.core.require_unlocked() {
-        state.core.relay.close(Some(&prepared.id));
-        return Err(error.public());
-    }
     let playback = Playback {
         session_id: prepared.id,
         channel_id,
@@ -205,7 +176,6 @@ async fn play_native(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Reply<()> {
-    state.core.require_unlocked().map_err(|e| e.public())?;
     let playback = state
         .playback
         .lock()
@@ -289,8 +259,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status,
-            unlock,
-            lock,
             list_sources,
             save_source,
             remove_source,
@@ -317,7 +285,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit)
                 && let Some(state) = app.try_state::<AppState>()
             {
-                state.core.lock();
+                state.core.shutdown();
             }
         });
 }

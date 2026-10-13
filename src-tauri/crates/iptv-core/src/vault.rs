@@ -1,5 +1,4 @@
 use crate::error::{Error, Result};
-use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
@@ -12,10 +11,12 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-const MAGIC: &[u8] = b"IPTVVAULT1";
-const CHECK: &[u8] = b"IPTV 1.0 local vault verification";
-const AAD: &[u8] = b"com.devsolux.iptv/vault/v1";
+const MAGIC: &[u8] = b"IPTVKEY1";
 
+/// Sealed storage for source configuration and stream secrets. The 32-byte key is generated
+/// once per profile and kept in a private file next to the data, so the application starts
+/// without a passphrase. This protects against accidental disclosure (backups, copied files,
+/// logs), not against an attacker who already runs as the same user.
 pub struct Vault {
     path: PathBuf,
     key: Mutex<Option<Zeroizing<[u8; 32]>>>,
@@ -30,59 +31,36 @@ impl Vault {
     pub fn exists(&self) -> bool {
         self.path.exists()
     }
-    pub fn is_unlocked(&self) -> bool {
+    pub fn is_ready(&self) -> bool {
         self.key.lock().is_ok_and(|key| key.is_some())
     }
-    pub fn lock(&self) {
+    /// Drops the key from memory; used at shutdown.
+    pub fn clear(&self) {
         if let Ok(mut key) = self.key.lock() {
             *key = None;
         }
     }
-
-    pub fn unlock(&self, password: Zeroizing<String>) -> Result<()> {
-        if password.len() > 1024 {
-            return Err(Error::Limit);
-        }
+    /// Loads the profile key, creating it on first start. A damaged key file is rejected
+    /// rather than silently replaced, because replacing it would orphan every sealed record.
+    pub fn initialize(&self) -> Result<()> {
         let mut guard = self.key.lock().map_err(|_| Error::Vault)?;
-        let (salt, existing) = if self.path.exists() {
+        if guard.is_some() {
+            return Ok(());
+        }
+        let mut key = Zeroizing::new([0u8; 32]);
+        if self.path.exists() {
             let mut bytes = Vec::new();
             fs::File::open(&self.path)?
-                .take(4097)
+                .take(MAGIC.len() as u64 + 33)
                 .read_to_end(&mut bytes)?;
-            if bytes.len() > 4096
-                || bytes.len() < MAGIC.len() + 16 + 40
-                || !bytes.starts_with(MAGIC)
-            {
+            if bytes.len() != MAGIC.len() + 32 || !bytes.starts_with(MAGIC) {
                 return Err(Error::Vault);
             }
-            let mut salt = [0u8; 16];
-            salt.copy_from_slice(&bytes[MAGIC.len()..MAGIC.len() + 16]);
-            (salt, Some(bytes[MAGIC.len() + 16..].to_vec()))
+            key.copy_from_slice(&bytes[MAGIC.len()..]);
         } else {
-            if password.chars().count() < 12 {
-                return Err(Error::Invalid(
-                    "Use a passphrase of at least 12 characters.",
-                ));
-            }
-            let mut salt = [0u8; 16];
-            getrandom::fill(&mut salt).map_err(|_| Error::Vault)?;
-            (salt, None)
-        };
-        // Fixed, versioned KDF parameters: 32 MiB, three passes, one lane.
-        let params = Params::new(32 * 1024, 3, 1, Some(32)).map_err(|_| Error::Vault)?;
-        let kdf = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let mut key = Zeroizing::new([0u8; 32]);
-        kdf.hash_password_into(password.as_bytes(), &salt, &mut *key)
-            .map_err(|_| Error::Vault)?;
-        if let Some(bytes) = existing {
-            let plain = decrypt(&key, AAD, &bytes)?;
-            if plain.as_slice() != CHECK {
-                return Err(Error::Vault);
-            }
-        } else {
+            getrandom::fill(&mut *key).map_err(|_| Error::Vault)?;
             let mut bytes = MAGIC.to_vec();
-            bytes.extend_from_slice(&salt);
-            bytes.extend_from_slice(&encrypt(&key, AAD, CHECK)?);
+            bytes.extend_from_slice(&*key);
             write_private_new(&self.path, &bytes)?;
         }
         *guard = Some(key);
@@ -90,19 +68,11 @@ impl Vault {
     }
     pub fn seal(&self, context: &str, plain: &[u8]) -> Result<Vec<u8>> {
         let key = self.key.lock().map_err(|_| Error::Vault)?;
-        encrypt(
-            key.as_ref().ok_or(Error::Locked)?,
-            context.as_bytes(),
-            plain,
-        )
+        encrypt(key.as_ref().ok_or(Error::Vault)?, context.as_bytes(), plain)
     }
     pub fn open(&self, context: &str, bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
         let key = self.key.lock().map_err(|_| Error::Vault)?;
-        decrypt(
-            key.as_ref().ok_or(Error::Locked)?,
-            context.as_bytes(),
-            bytes,
-        )
+        decrypt(key.as_ref().ok_or(Error::Vault)?, context.as_bytes(), bytes)
     }
 }
 fn encrypt(key: &[u8; 32], aad: &[u8], plain: &[u8]) -> Result<Vec<u8>> {
@@ -136,7 +106,7 @@ fn decrypt(key: &[u8; 32], aad: &[u8], bytes: &[u8]) -> Result<Zeroizing<Vec<u8>
 }
 fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = path.with_extension("initializing");
-    // Recover only the known incomplete first-creation file, never an existing vault.
+    // Recover only the known incomplete first-creation file, never an existing key.
     if temp.exists() {
         fs::remove_file(&temp)?;
     }

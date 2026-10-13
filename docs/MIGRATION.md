@@ -20,6 +20,10 @@ Product name is `IPTV`, release version is `1.0.0`, and the application identifi
 
 Changing the identifier means a different installed application/data location on relevant platforms. This source does not read or copy old credential stores and does not overwrite an existing application database. Re-add authorized sources to the new vault. Stable IDs are maintained for subsequent refreshes within this application's own source identity model.
 
+## Passphrase vault removed
+
+Earlier revisions of this application protected source secrets with a user passphrase. The passphrase and the unlock screen are gone: Rust now keeps a random per-profile key in a private file beside the database and opens the library directly. Records sealed under a passphrase cannot be read without it, so a profile that still contains the old `credentials.vault` is reset once at startup (its sources, channels, favorites and guide overrides are removed, the file deleted) and sources must be added again.
+
 ## Rights and release ownership
 
 No license was invented for the supplied application artwork or flag collection. Their provenance is documented, and redistribution rights remain an owner review item. The source code is licensed under the MIT License (`LICENSE`). No production deployment, stream publication or signing operation has been performed.

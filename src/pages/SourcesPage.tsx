@@ -265,7 +265,7 @@ export default function SourcesPage() {
             <p>
               Imports run outside the interface. Playlist and guide changes become visible together
               only after a successful import. Sources refresh approximately every six hours while
-              IPTV is running and unlocked.
+              IPTV is running.
             </p>
             <p>
               Guide feeds are processed in the order entered. Exact TVG IDs take priority; ambiguous

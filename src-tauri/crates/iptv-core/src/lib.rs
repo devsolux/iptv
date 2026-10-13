@@ -31,7 +31,6 @@ use std::{
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 use vault::Vault;
-use zeroize::Zeroizing;
 
 struct TrackedJob {
     job: Job,
@@ -51,7 +50,6 @@ pub struct Core {
     jobs: Mutex<HashMap<String, TrackedJob>>,
     source_gate: Mutex<()>,
     imports: Arc<Semaphore>,
-    unlocks: Arc<Semaphore>,
     catalog: Mutex<Option<CatalogCache>>,
     logo_dir: PathBuf,
     logo_permits: Arc<Semaphore>,
@@ -72,17 +70,25 @@ impl Core {
         let profile_lock = options.open(directory.join("profile.lock"))?;
         profile_lock.try_lock().map_err(|_| Error::Busy)?;
         let database = Database::open(directory.join("catalogue.db"))?;
+        // Records sealed under the former passphrase vault cannot be opened without it; such a
+        // profile is reset once so the application starts without any prompt.
+        let legacy = directory.join("credentials.vault");
+        if legacy.exists() {
+            database.reset_sources()?;
+            std::fs::remove_file(&legacy)?;
+        }
+        let vault = Vault::new(directory.join("credentials.key"));
+        vault.initialize()?;
         let logo_dir = directory.join("logos");
         db::private_directory(&logo_dir)?;
         let core = Arc::new(Self {
             database,
-            vault: Vault::new(directory.join("credentials.vault")),
+            vault,
             relay: Relay::bind().await?,
             changes: tokio::sync::watch::channel(0).0,
             jobs: Mutex::new(HashMap::new()),
             source_gate: Mutex::new(()),
             imports: Arc::new(Semaphore::new(1)),
-            unlocks: Arc::new(Semaphore::new(1)),
             catalog: Mutex::new(None),
             logo_dir,
             logo_permits: Arc::new(Semaphore::new(4)),
@@ -117,7 +123,6 @@ impl Core {
     /// fetched once through the image policy with bounded concurrency. Failures are
     /// remembered for an hour so a dead image host is not retried on every scroll.
     pub async fn logo(self: &Arc<Self>, channel: &str) -> Result<(Vec<u8>, &'static str)> {
-        self.require_unlocked()?;
         if let Ok(failures) = self.logo_failures.lock()
             && failures
                 .get(channel)
@@ -174,46 +179,18 @@ impl Core {
             }
         }
     }
-    pub fn require_unlocked(&self) -> Result<()> {
-        if self.vault.is_unlocked() {
-            Ok(())
-        } else {
-            Err(Error::Locked)
-        }
-    }
-    pub async fn unlock(self: &Arc<Self>, password: String) -> Result<()> {
-        let _permit = self
-            .unlocks
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| Error::Cancelled)?;
-        let core = self.clone();
-        let result =
-            tokio::task::spawn_blocking(move || core.vault.unlock(Zeroizing::new(password)))
-                .await
-                .map_err(|_| Error::Vault)?;
-        // Throttle repeated local attempts without blocking the UI or retaining passwords.
-        if result.is_err() {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-        result?;
-        let core = self.clone();
-        let _ = tokio::task::spawn_blocking(move || core.refresh_due()).await;
-        Ok(())
-    }
-    pub fn lock(&self) {
+    /// Cancels imports, ends playback and drops the key from memory; used at exit.
+    pub fn shutdown(&self) {
         if let Ok(jobs) = self.jobs.lock() {
             for job in jobs.values() {
                 job.cancel.store(true, Ordering::Relaxed);
             }
         }
         self.relay.close(None);
-        self.vault.lock();
+        self.vault.clear();
     }
     pub fn remove_source(&self, source: &str) -> Result<()> {
         let _gate = self.source_gate.lock().map_err(|_| Error::Storage)?;
-        self.require_unlocked()?;
         if self.source_busy(source) {
             return Err(Error::Busy);
         }
@@ -231,7 +208,6 @@ impl Core {
     }
     pub fn start_job(self: &Arc<Self>, source_id: String) -> Result<String> {
         let _gate = self.source_gate.lock().map_err(|_| Error::Storage)?;
-        self.require_unlocked()?;
         db::valid_id(&source_id)?;
         // Read/validate source existence before enqueuing; caller executes this on a worker.
         self.database.source_config(&source_id, &self.vault)?;
@@ -291,7 +267,6 @@ impl Core {
         Ok(id)
     }
     pub fn jobs(&self) -> Result<Vec<Job>> {
-        self.require_unlocked()?;
         let jobs = self.jobs.lock().map_err(|_| Error::Storage)?;
         let mut result = jobs.values().map(|j| j.job.clone()).collect::<Vec<_>>();
         result.sort_by(|a, b| {
@@ -305,7 +280,6 @@ impl Core {
         self.changes.send_modify(|revision| *revision += 1);
     }
     pub fn job(&self, id: &str) -> Result<Job> {
-        self.require_unlocked()?;
         db::valid_id(id)?;
         self.jobs
             .lock()
@@ -315,7 +289,6 @@ impl Core {
             .ok_or(Error::NotFound)
     }
     pub fn cancel(&self, id: &str) -> Result<()> {
-        self.require_unlocked()?;
         db::valid_id(id)?;
         let jobs = self.jobs.lock().map_err(|_| Error::Storage)?;
         let job = jobs.get(id).ok_or(Error::NotFound)?;
@@ -359,7 +332,6 @@ impl Core {
     }
     fn import(&self, source_id: &str, job_id: &str, cancel: Arc<AtomicBool>) -> Result<()> {
         check_cancel(&cancel)?;
-        self.require_unlocked()?;
         let config = self.database.source_config(source_id, &self.vault)?;
         let mut import = self.database.importer(source_id, &self.vault)?;
         let count = match &config.iptv_org {
@@ -395,7 +367,6 @@ impl Core {
             })?;
         }
         check_cancel(&cancel)?;
-        self.require_unlocked()?;
         self.progress(job_id, "activating", count);
         import.activate()
     }
@@ -528,9 +499,6 @@ impl Core {
         Ok(count)
     }
     pub fn refresh_due(self: &Arc<Self>) {
-        if !self.vault.is_unlocked() {
-            return;
-        }
         if let Ok(sources) = self.database.sources() {
             let now = chrono::Utc::now().timestamp();
             for source in sources {
@@ -552,7 +520,6 @@ impl Core {
         api_base: Option<&str>,
         playlist_base: Option<&str>,
     ) -> Result<iptv_org::Catalog> {
-        self.require_unlocked()?;
         let api = iptv_org::base_url(api_base.unwrap_or_default(), iptv_org::DEFAULT_API_BASE)?;
         let playlists = iptv_org::base_url(
             playlist_base.unwrap_or_default(),

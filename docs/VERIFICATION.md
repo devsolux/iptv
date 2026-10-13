@@ -105,6 +105,10 @@ A new ignored audit test (`live_relay_audit_of_public_streams`) drives the relay
 
 WebKit's native HLS player sends exactly those probes and reports any failure of the main resource as "format not supported", which produced the reported message. The relay now fetches playlist-like resources whole, re-fetches a ranged response that turns out to be a playlist, and answers HEAD from a GET. The desktop player uses hls.js first with native HLS as the fallback and maps relay and upstream failures to distinct messages. Checks: clippy, 23 Rust tests, 16 unit tests, typecheck, Biome, web build and 7 browser specifications pass; the audit and the other three live checks were run once more against the live hosts. Not executed: the native application against the rebuilt engine order.
 
+## Passphrase vault removed (October 13, 2026)
+
+The unlock screen, the Lock button, the `unlock`/`lock` commands, the `unlocked`/`vaultExists` status fields, `Error::Locked`, the Argon2 dependency and the vault page styles are gone. Secrets stay sealed with XChaCha20-Poly1305 under a random per-profile key (`credentials.key`, `0600`) that `Core::open` creates on first start; a profile still holding the former `credentials.vault` is reset once. Checks: clippy, Rust tests (new: key persistence, context binding, zeroization, damaged-key rejection, legacy-profile reset through `Core::open`), unit, SQL, tooling, typecheck, Biome, web build and browser specifications pass; `make check` passes.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:
@@ -130,6 +134,6 @@ Android host generation, Gradle/Media3 compilation and APK/AAB packaging; Window
 1. Keep dependencies pinned and both locks committed; review API changes, vulnerability and license reports after any `make bootstrap`. Run `make fmt`, `make check`, `make test-sql`, `make test-tools` and `make test-e2e` without weakening tests.
 2. Build each native target on the correct OS, inspect merged Android release network/backup/TV configuration, verify macOS ATS and all platform media transports.
 3. Test authorized HLS/DASH/progressive streams, provider headers, redirects, byte ranges, extensionless manifests, session cancellation, wrong credentials and unsupported formats. Test external-manifest references against the network policy.
-4. Test vault create/unlock/lock, wrong passwords, fresh installs, database migrations, interrupted/empty imports, stable favorites, EPG timezone/matching ambiguity and input size limits.
+4. Test fresh installs (key file creation), the one-time reset of legacy passphrase profiles, database migrations, interrupted/empty imports, stable favorites, EPG timezone/matching ambiguity and input size limits.
 5. Verify physical Fire TV 6/7/8 launch, actual WebView versions, remote input, memory, frame timing, decode behavior, background/resume and prolonged playback. Do not label an unsupported device supported merely because an APK builds.
 6. Review signing, identifiers, artwork rights and store rules. Release only after these owner-controlled gates are satisfied.

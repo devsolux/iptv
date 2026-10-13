@@ -15,7 +15,7 @@ A unified Ionic React / Tauri 2 application for live TV: bring your own M3U play
 
 ## Security in one paragraph
 
-Source URLs, headers and stream secrets are sealed in an Argon2id / XChaCha20-Poly1305 vault behind a passphrase. Every upstream request passes the Rust network policy: HTTPS unless the source consents to HTTP, DNS pinning, loopback, private, link-local and metadata address blocks, re-checked redirects, and an exact host allowlist for own playlists (public hosts only for aggregator sources). Unverified certificates are an explicit per-source consent, treated like cleartext. The WebView receives loopback URLs only and no shell, filesystem, SQL or HTTP plugin authority. Details are in [SECURITY.md](docs/SECURITY.md).
+Source URLs, headers and stream secrets are sealed with XChaCha20-Poly1305 under a random per-profile key that Rust creates on first start and keeps in a private file beside the data; there is no passphrase and nothing to unlock. Every upstream request passes the Rust network policy: HTTPS unless the source consents to HTTP, DNS pinning, loopback, private, link-local and metadata address blocks, re-checked redirects, and an exact host allowlist for own playlists (public hosts only for aggregator sources). Unverified certificates are an explicit per-source consent, treated like cleartext. The WebView receives loopback URLs only and no shell, filesystem, SQL or HTTP plugin authority. Details are in [SECURITY.md](docs/SECURITY.md).
 
 ## First build
 
@@ -34,7 +34,7 @@ make dev
 
 ## Application flow
 
-Create a local vault passphrase. On the Sources page choose **Own M3U playlist** or **iptv-org public catalogue**: for iptv-org pick official playlists by country, category, language, region, subdivision, city or master index, or a custom selection with a country mode, categories, languages and exclusions; the pickers are filled from the live iptv-org lists and codes can always be typed. Imports run in the background and refresh while the application is open and unlocked (every six hours for own playlists, configurable for iptv-org). Browse Live TV, Countries, Favorites and the TV guide; press Enter to watch. No sample subscription, cloud account or published channel database is bundled.
+The application opens straight into the library. On the Sources page choose **Own M3U playlist** or **iptv-org public catalogue**: for iptv-org pick official playlists by country, category, language, region, subdivision, city or master index, or a custom selection with a country mode, categories, languages and exclusions; the pickers are filled from the live iptv-org lists and codes can always be typed. Imports run in the background and refresh while the application is open and unlocked (every six hours for own playlists, configurable for iptv-org). Browse Live TV, Countries, Favorites and the TV guide; press Enter to watch. No sample subscription, cloud account or published channel database is bundled.
 
 ## Workspace
 
@@ -42,7 +42,7 @@ Create a local vault passphrase. On the Sources page choose **Own M3U playlist**
 | --- | --- |
 | `src/` | Ionic UI, routes, components, bounded state, focus, the player hook with its hls.js / dash.js / mpegts.js engines and the iptv-org source form |
 | `src-tauri/src/` | Tauri commands and application lifecycle |
-| `src-tauri/crates/iptv-core/` | Streaming parsers, iptv-org selection and serializer, SQLite generations, vault, network policy, artwork cache and the media relay |
+| `src-tauri/crates/iptv-core/` | Streaming parsers, iptv-org selection and serializer, SQLite generations, sealed key store, network policy, artwork cache and the media relay |
 | `src-tauri/plugins/player/` | Android Media3 bridge and native TV player |
 | `scripts/`, `Makefile` | Explicit dependency/bootstrap, platform configuration and safe build/cleanup tasks |
 | `tests/` | Frontend unit tests, SQL invariants, Rust integration tests (including ignored live network checks) and browser specifications |

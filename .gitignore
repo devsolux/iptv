@@ -22,6 +22,7 @@ __MACOSX/
 *.db-shm
 *.db-wal
 *.vault
+*.key
 *.log
 
 __pycache__/

@@ -1,9 +1,8 @@
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar } from '@ionic/react';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router';
 import { dpadScope } from '../hooks/useDpadScope';
-import { api, errorMessage, isPreview } from '../lib/bridge';
-import { useUiStore } from '../store/ui';
+import { isPreview } from '../lib/bridge';
 import { Icon } from './Icon';
 
 const links = [
@@ -39,24 +38,6 @@ export function Shell() {
   useEffect(() => {
     focusNavigation();
   }, []);
-  const [error, setError] = useState('');
-  const [locking, setLocking] = useState(false);
-  async function lock() {
-    setLocking(true);
-    setError('');
-    try {
-      await api.lock();
-    } catch (error) {
-      setError(errorMessage(error));
-    } finally {
-      try {
-        useUiStore.getState().setStatus(await api.status());
-      } catch {
-        /* Existing error remains visible. */
-      }
-      setLocking(false);
-    }
-  }
   return (
     <IonPage>
       <IonHeader className="ion-no-border">
@@ -72,22 +53,6 @@ export function Shell() {
               <span className="status-dot" />
               Local library
             </span>
-            <button
-              type="button"
-              id="lock-vault"
-              className="icon-button"
-              aria-label="Lock vault"
-              onKeyDown={(event) => {
-                if (['ArrowDown', 'ArrowLeft'].includes(event.key)) {
-                  event.preventDefault();
-                  focusNavigation();
-                }
-              }}
-              disabled={isPreview || locking}
-              onClick={() => void lock()}
-            >
-              <Icon name="lock" />
-            </button>
           </div>
         </IonToolbar>
       </IonHeader>
@@ -99,14 +64,7 @@ export function Shell() {
               id="primary-navigation"
               aria-label="Primary navigation"
               onKeyDown={(event) => {
-                if (
-                  event.key === 'ArrowUp' &&
-                  event.target === event.currentTarget.firstElementChild &&
-                  !isPreview
-                ) {
-                  event.preventDefault();
-                  document.getElementById('lock-vault')?.focus();
-                } else if (event.key === 'ArrowRight') {
+                if (event.key === 'ArrowRight') {
                   event.preventDefault();
                   focusPageStart();
                 } else dpadScope(event);
@@ -144,11 +102,6 @@ export function Shell() {
                 Development preview · 50,000 synthetic channels · Native imports and playback are
                 disabled.
               </div>
-            )}
-            {error && (
-              <p className="inline-error" role="alert">
-                {error}
-              </p>
             )}
             <Outlet />
           </main>

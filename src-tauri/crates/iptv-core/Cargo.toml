@@ -17,7 +17,6 @@ uuid.workspace = true
 thiserror.workspace = true
 axum.workspace = true
 futures-util.workspace = true
-argon2.workspace = true
 chacha20poly1305.workspace = true
 getrandom.workspace = true
 zeroize.workspace = true

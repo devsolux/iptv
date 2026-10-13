@@ -4,9 +4,9 @@ This is an implementation design and source review, not a completed security aud
 
 ## Secrets and local data
 
-The user chooses a vault passphrase of at least twelve characters. Argon2id derives the key using a random salt (32 MiB, three passes, one lane). XChaCha20-Poly1305 encrypts source configuration and stream secrets with context-specific authenticated additional data. Rust key buffers are zeroized on release. The passphrase is not stored and there is no password recovery.
+There is no passphrase. On first start Rust generates a random 32-byte profile key, stores it in a private (`0600`) file next to the database and loads it on every launch, so the application opens straight into the library. XChaCha20-Poly1305 seals source configuration, stream URLs/headers and sensitive metadata with context-specific authenticated additional data; key buffers are zeroized at exit. The seal protects against accidental disclosure (copied profiles, backups, logs), not against an attacker who already runs as the same user, because the key lives beside the data. A damaged key file is rejected rather than replaced, since replacing it would orphan every sealed record. Profiles created by the former passphrase vault cannot be opened without that passphrase; such a profile is reset once at startup (sources, favorites and overrides are removed, channel data with them) and the old vault file is deleted.
 
-Channel names, grouping, favorites and programme metadata are **not full-database encrypted**. Source URLs, stream URLs/headers and sensitive associated metadata are encrypted. A locked application cannot refresh or resolve new playback sessions. JavaScript form values are cleared after submission, but this is not a guarantee of cryptographic memory erasure in a managed runtime. Process compromise and an attacker controlling the same user account are outside this vault boundary. Android backup is disabled for the generated host.
+Channel names, grouping, favorites and programme metadata are **not full-database encrypted**. JavaScript form values are cleared after submission, but this is not a guarantee of cryptographic memory erasure in a managed runtime. Process compromise is outside this boundary. Android backup is disabled for the generated host.
 
 ## Untrusted input and native authority
 
@@ -34,4 +34,4 @@ Android release network resources allow Java HTTP only to loopback; debug resour
 
 ## Reporting and release controls
 
-Do not log complete source/stream URLs, provider credentials, passphrases or relay tokens. Keep signing secrets outside the repository. No deployment, publication, signing-key generation or production-state changes occur in the build workflow. Run a dependency audit and an adversarial redirect/DNS/manifest/IPC review on the resolved dependency graph before distributing binaries.
+Do not log complete source/stream URLs, provider credentials, the profile key or relay tokens. Keep signing secrets outside the repository. No deployment, publication, signing-key generation or production-state changes occur in the build workflow. Run a dependency audit and an adversarial redirect/DNS/manifest/IPC review on the resolved dependency graph before distributing binaries.

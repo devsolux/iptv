@@ -5,9 +5,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Public errors deliberately do not expose provider URLs, headers, paths or SQL.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Unlock the local vault first.")]
-    Locked,
-    #[error("The passphrase is incorrect or the vault is damaged.")]
+    #[error("The local key store is damaged or unreadable.")]
     Vault,
     #[error("{0}")]
     Invalid(&'static str),
@@ -50,7 +48,6 @@ pub struct PublicError {
 impl Error {
     pub fn public(&self) -> PublicError {
         let code = match self {
-            Self::Locked => "LOCKED",
             Self::Vault => "VAULT",
             Self::Invalid(_) => "INVALID",
             Self::Network => "NETWORK",

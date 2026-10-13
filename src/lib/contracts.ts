@@ -5,8 +5,6 @@ export const statusSchema = z.object({
   name: z.literal('IPTV'),
   version: z.literal('1.0.0'),
   identifier: z.literal('com.devsolux.iptv'),
-  unlocked: z.boolean(),
-  vaultExists: z.boolean(),
   nativePlayer: z.boolean(),
 });
 export const sourceSchema = z.object({

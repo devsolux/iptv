@@ -15,7 +15,6 @@ import { Modal } from './components/Modal';
 import { Shell } from './components/Shell';
 import { api, errorMessage, isPreview } from './lib/bridge';
 import ChannelsPage from './pages/ChannelsPage';
-import { VaultPage } from './pages/VaultPage';
 import { useUiStore } from './store/ui';
 
 const GuidePage = lazy(() => import('./pages/GuidePage'));
@@ -207,8 +206,6 @@ export default function App() {
               <Loading label="Opening IPTV…" />
             )}
           </div>
-        ) : !status.unlocked ? (
-          <VaultPage />
         ) : (
           <HashRouter>
             <ApplicationRoutes />

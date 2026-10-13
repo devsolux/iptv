@@ -116,6 +116,18 @@ impl Database {
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
+    /// Removes every source with its generations, favorites and overrides. Used once when a
+    /// profile still holds records sealed under the former passphrase, which no longer exists.
+    pub fn reset_sources(&self) -> Result<()> {
+        let mut connection = self.connect()?;
+        let tx = connection.transaction()?;
+        tx.execute("DELETE FROM favorites", [])?;
+        tx.execute("DELETE FROM epg_overrides", [])?;
+        tx.execute("DELETE FROM sources", [])?;
+        bump_revision(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
     pub fn remove_source(&self, id: &str) -> Result<()> {
         valid_id(id)?;
         let mut connection = self.connect()?;

@@ -15,7 +15,6 @@ use std::{
 };
 use url::Url;
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
 struct Profile(PathBuf);
 impl Profile {
@@ -144,12 +143,12 @@ fn xmltv_reads_channels_and_programmes_without_expanding_external_entities() {
     assert_eq!((channels, programmes), (1, 1));
 }
 #[test]
-fn vault_enforces_context_authentication_and_locking() {
+fn device_key_store_is_persistent_context_bound_and_zeroized() {
     let profile = Profile::new();
-    let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".to_owned()))
-        .unwrap();
+    let vault = Vault::new(profile.0.join("key"));
+    assert!(!vault.exists());
+    vault.initialize().unwrap();
+    assert!(vault.exists() && vault.is_ready());
     let sealed = vault.seal("source:a", b"private token").unwrap();
     assert!(!sealed.windows(13).any(|w| w == b"private token"));
     assert_eq!(
@@ -157,25 +156,62 @@ fn vault_enforces_context_authentication_and_locking() {
         b"private token"
     );
     assert!(vault.open("source:b", &sealed).is_err());
-    vault.lock();
+    vault.clear();
+    assert!(!vault.is_ready());
     assert!(vault.open("source:a", &sealed).is_err());
-    assert!(
-        vault
-            .unlock(Zeroizing::new("incorrect passphrase".to_owned()))
-            .is_err()
+    // A second instance reads the same profile key and opens earlier records.
+    let again = Vault::new(profile.0.join("key"));
+    again.initialize().unwrap();
+    assert_eq!(
+        again.open("source:a", &sealed).unwrap().as_slice(),
+        b"private token"
     );
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".to_owned()))
-        .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(profile.0.join("key"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    // A damaged key file is rejected rather than silently replaced.
+    std::fs::write(profile.0.join("key"), b"garbage").unwrap();
+    assert!(Vault::new(profile.0.join("key")).initialize().is_err());
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn profiles_sealed_under_a_legacy_passphrase_are_reset_once() {
+    let profile = Profile::new();
+    let legacy = profile.0.join("credentials.vault");
+    std::fs::write(&legacy, b"IPTVVAULT1 former passphrase vault").unwrap();
+    {
+        let db = Database::open(profile.0.join("catalogue.db")).unwrap();
+        let vault = Vault::new(profile.0.join("other.key"));
+        vault.initialize().unwrap();
+        let id = db.save_source(&source(), &vault).unwrap();
+        let mut import = db.importer(&id, &vault).unwrap();
+        import
+            .channel(channel("https://provider.invalid/a"))
+            .unwrap();
+        import.activate().unwrap();
+        assert_eq!(db.sources().unwrap().len(), 1);
+    }
+    let core = iptv_core::Core::open(profile.0.clone()).await.unwrap();
+    assert!(!legacy.exists());
+    assert!(profile.0.join("credentials.key").exists());
+    assert!(core.database.sources().unwrap().is_empty());
+    assert_eq!(core.channels(&query()).unwrap().total, 0);
+    // A fresh source works immediately: no prompt, no unlock step.
+    let id = core.database.save_source(&source(), &core.vault).unwrap();
+    assert_eq!(core.database.sources().unwrap()[0].id, id);
+    core.shutdown();
 }
 #[test]
 fn refresh_is_atomic_and_favorites_survive_stream_token_changes() {
     let profile = Profile::new();
     let db = Database::open(profile.0.join("catalogue.db")).unwrap();
     let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".into()))
-        .unwrap();
+    vault.initialize().unwrap();
     let source = db.save_source(&source(), &vault).unwrap();
     let mut import = db.importer(&source, &vault).unwrap();
     import
@@ -206,9 +242,7 @@ fn request_headers_define_variants_not_new_logical_channels() {
     let profile = Profile::new();
     let db = Database::open(profile.0.join("catalogue.db")).unwrap();
     let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".into()))
-        .unwrap();
+    vault.initialize().unwrap();
     let source = db.save_source(&source(), &vault).unwrap();
     let mut import = db.importer(&source, &vault).unwrap();
     let mut first = channel("https://provider.invalid/a");
@@ -312,9 +346,7 @@ fn an_open_import_does_not_block_concurrent_catalogue_writes() {
     let profile = Profile::new();
     let db = Database::open(profile.0.join("catalogue.db")).unwrap();
     let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".into()))
-        .unwrap();
+    vault.initialize().unwrap();
     let source = db.save_source(&source(), &vault).unwrap();
     let mut import = db.importer(&source, &vault).unwrap();
     import
@@ -781,9 +813,7 @@ fn iptv_org_serializer_output_is_a_valid_catalogue_for_the_playlist_importer() {
     let profile = Profile::new();
     let db = Database::open(profile.0.join("catalogue.db")).unwrap();
     let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".into()))
-        .unwrap();
+    vault.initialize().unwrap();
     let source = db.save_source(&org_source(config), &vault).unwrap();
     let mut import = db.importer(&source, &vault).unwrap();
     m3u::parse(Cursor::new(text), |channel| import.channel(channel)).unwrap();
@@ -914,9 +944,7 @@ fn version_one_profiles_migrate_and_record_the_source_kind() {
         .unwrap();
     assert_eq!(version, 3);
     let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".into()))
-        .unwrap();
+    vault.initialize().unwrap();
     db.save_source(&source(), &vault).unwrap();
     db.save_source(
         &org_source(org_config(&["DE"], CountryMode::CoverageStrict)),
@@ -1060,9 +1088,7 @@ fn artwork_is_sniffed_cached_and_served_only_through_the_image_policy() {
     // The stored artwork URL is readable only for active channels, through the vault.
     let db = Database::open(profile.0.join("catalogue.db")).unwrap();
     let vault = Vault::new(profile.0.join("vault"));
-    vault
-        .unlock(Zeroizing::new("a long test passphrase".into()))
-        .unwrap();
+    vault.initialize().unwrap();
     let source_id = db.save_source(&own, &vault).unwrap();
     let mut import = db.importer(&source_id, &vault).unwrap();
     let mut with_logo = channel("https://provider.invalid/a");
@@ -1166,9 +1192,6 @@ async fn live_relay_serves_a_public_iptv_org_stream() {
 async fn live_core_imports_an_official_playlist_and_serves_artwork() {
     let profile = Profile::new();
     let core = iptv_core::Core::open(profile.0.clone()).await.unwrap();
-    core.unlock("a long test passphrase".to_owned())
-        .await
-        .unwrap();
     let mut config = org_config(&[], CountryMode::CoverageStrict);
     config.method = Method::Playlist;
     config.playlists = vec![OfficialPlaylist {
@@ -1232,7 +1255,7 @@ async fn live_core_imports_an_official_playlist_and_serves_artwork() {
         content_type,
         bytes.len()
     );
-    core.lock();
+    core.shutdown();
 }
 /// Audit: drives the relay the way a native player does for a sample of public streams and
 /// prints one line per stream. Run with `--ignored --nocapture`; it asserts nothing.
