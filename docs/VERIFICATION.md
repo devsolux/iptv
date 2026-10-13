@@ -113,6 +113,27 @@ The unlock screen, the Lock button, the `unlock`/`lock` commands, the `unlocked`
 
 Live `streams.json` carries exactly two labels, `Not 24/7` (1,805 streams) and `Geo-blocked` (1,202), which the catalogue selection already matched; the gap was that official playlists mark the same labels in channel names (`[Geo-blocked]`, `[Not 24/7]`) and were never filtered, and the toggles were hidden for that method. Both exclusions now default to on, apply to official playlists through the name markers (`Filters::excludes_official_name`) and are offered for both methods. Checks: clippy, Rust tests (defaults, name markers, catalogue exclusion), unit, typecheck, Biome, web build and browser specifications pass.
 
+## Release workflow repair (October 13, 2026)
+
+Release run 38437449018 (tag `v1.0.0`) passed the prepare, verify, Linux and Windows jobs and failed in two places, both fixed in `releases.yml`:
+
+| Finding | Cause | Fix |
+| --- | --- | --- |
+| macOS universal: `lipo: unknown architecture` after the `.dmg` and `.app` had been built | `-verify_arch` received the binary after the architecture list, and Xcode 27's lipo rejects the documented order as well (`-verify_arch requires exactly one input file`) | The step reads `lipo -archs` and requires exactly the `arm64` and `x86_64` slices |
+| Android armv7 and aarch64: `Failed to find package 'platforms;android-37'` | The Tauri CLI 2.12.2 host template declares `compileSdk = 37`, and Google publishes API 37 only as minor-versioned platforms (`platforms;android-37.0`, `37.1`, `37.2`); no channel offers `platforms;android-37` | The host step resolves every declared level to `platforms;android-N` or `platforms;android-N.0` from the stable listing and fails with that listing when neither exists; the SDK step installs only the NDK and build tools and no longer reinstalls `cmdline-tools;latest` into a second directory |
+
+Reproducing the Android job on this machine (Tauri CLI 2.12.2 host, AGP 9.3.1, Gradle 9.6.1, Kotlin 2.2.10, JDK 21, NDK 30.0.16138531, platforms `android-37.0` and `android-36`) exposed a third defect the run had not reached: the player plugin imports `androidx.activity.ComponentActivity` and `OnBackPressedCallback`, but `tauri-android` keeps appcompat as an `implementation` dependency, so `compileReleaseKotlin` failed with unresolved references. The plugin now declares `androidx.activity:activity:1.13.0` (minimum compileSdk 36, AGP 8.9.1).
+
+| Check | Result |
+| --- | --- |
+| `npm run tauri -- android init --ci`, `scripts/android-configure.mjs` and `--check` | Passed; the generated host declares `compileSdk = 37` / `targetSdk = 37` and compiled against the installed `android-37.0` platform (no `android-37` directory exists) |
+| `npm run tauri -- android build --ci --target aarch64 --apk -- --locked` (macOS host) | Passed: `app-universal-release-unsigned.apk` (16.4 MB) containing only `lib/arm64-v8a/libiptv_lib.so`, which is what the ABI check of the collect step expects |
+| `lipo -archs` slice check | Accepted a freshly linked arm64+x86_64 test binary and rejected a system binary carrying `arm64e` slices |
+| `ruby -ryaml` parse of `releases.yml`, `node scripts/project.mjs verify` and `release`, `python3 -m unittest discover -s tests/tools` | Passed |
+| `make check`, `make test-sql test-tools` after the change (the plugin's Gradle output is now gitignored, which Biome honours) | Passed: 24 Rust tests, 12 SQL and 7 tooling tests |
+
+Not executed: the armv7 build, AAB packaging, APK signing, the GitHub Actions re-run of the release workflow and installation on a device.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:
@@ -127,11 +148,12 @@ Running the real toolchain for the first time exposed defects that are now fixed
 
 ## Not executed / not established
 
-Android host generation, Gradle/Media3 compilation and APK/AAB packaging; Windows and Linux builds; the macOS universal build, `.app`/`.dmg` bundling, signing and notarization; GitHub Actions runs of these workflows for this revision; real streaming, decoder and hardware-acceleration behavior; Fire OS 6/7/8 devices, 60 fps, memory, thermal and long-session behavior; dependency license review.
+The armv7 Android build, AAB packaging and APK signing (host generation, Gradle/Media3 compilation and the aarch64 APK ran once on this machine, see above); macOS signing and notarization; a green GitHub Actions run of the release workflow for this revision (run 38437449018 built the Linux and Windows packages and the macOS `.dmg` before its collect step failed); real streaming, decoder and hardware-acceleration behavior; Fire OS 6/7/8 devices, 60 fps, memory, thermal and long-session behavior; dependency license review.
 
 ## Open items
 
 - Resolved on October 13, 2026: `public/flags` is excluded in `biome.json` and the configuration was migrated to `rules.preset`, so `npm run lint` and `make check` pass; the `web` job of the verification workflow, which had failed on exactly this step since the first push, is green again. `verify.yml` now pins runner images (Ubuntu 24.04, macOS 15, Windows 2025, ahead of the announced `ubuntu-latest` move to Ubuntu 26), caches Cargo builds and keeps Playwright traces of failed specifications. `releases.yml` builds from the committed lockfiles instead of re-resolving dependencies with `make bootstrap` in CI, no longer depends on the uncommitted `docs/dependencies-resolved.json`, uses Temurin JDK 21 for the Android host and signs eleven platform packages.
+- Release run 38437449018 (`v1.0.0`) failed on the macOS `lipo` check and the Android `platforms;android-37` install; fixed on October 13, 2026 (see "Release workflow repair"). Re-run the workflow for the published release or through `workflow_dispatch`.
 
 ## Release acceptance checklist
 

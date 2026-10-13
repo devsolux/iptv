@@ -21,6 +21,9 @@ kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
 // plugin versions. Do not introduce a second plugin/toolchain authority here.
 dependencies {
     implementation(project(":tauri-android"))
+    // tauri-android keeps appcompat as an implementation detail, so the
+    // ComponentActivity back-press dispatcher used below needs its own declaration.
+    implementation("androidx.activity:activity:1.13.0")
     val media3 = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")

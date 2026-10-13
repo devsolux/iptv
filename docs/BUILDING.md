@@ -8,7 +8,7 @@ Use Node 22.12 or newer; `.node-version` selects 26.11.1. npm 10.9 or newer is a
 
 macOS needs Xcode command-line tools; the configured application minimum is macOS 13.3. Universal builds need the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets. Windows requires the MSVC build tools and WebView2. Linux needs the GTK/WebKitGTK development packages and the appropriate GStreamer codecs for actual media playback. System codec availability must be tested separately from compilation.
 
-Android needs JDK 17 or 21 (the release workflow uses Temurin 21), SDK 36 and an NDK/toolchain compatible with the selected Tauri CLI. Configure `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME`. Media3 1.11 requires Kotlin 2.2 or newer; inspect the generated host's Kotlin/AGP/Gradle versions against the [Media3 release requirements](https://developer.android.com/jetpack/androidx/releases/media3). The local plugin does not create a second conflicting AGP version authority.
+Android needs JDK 17 or 21 (the release workflow uses Temurin 21), the SDK platforms declared by the generated host and the player plugin (API 37 with the Tauri 2.12 template, which Google publishes as `platforms;android-37.0`; API 36 for the plugin) and an NDK/toolchain compatible with the selected Tauri CLI. Configure `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME`. Media3 1.11 requires Kotlin 2.2 or newer; inspect the generated host's Kotlin/AGP/Gradle versions against the [Media3 release requirements](https://developer.android.com/jetpack/androidx/releases/media3). The local plugin does not create a second conflicting AGP version authority.
 
 ## Declared main package versions
 
@@ -25,6 +25,7 @@ Android needs JDK 17 or 21 (the release workflow uses Temurin 21), SDK 36 and an
 | TanStack React Virtual / Zustand | 3.14.17 / 5.0.15 |
 | hls.js / dash.js | 1.7.3 / 5.2.1 |
 | Android Media3 | 1.11.1 |
+| AndroidX Activity (player plugin back-press dispatcher) | 1.13.0 |
 
 All direct declarations are in `package.json`, the Cargo workspace and the player Gradle file. Upstream release information is not proof that the combined graph compiles. Every direct npm dependency is an exact version, and the resolved graphs are committed as `package-lock.json` and `src-tauri/Cargo.lock`; see [VERIFICATION.md](VERIFICATION.md) for what was built and tested against them.
 

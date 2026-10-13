@@ -275,7 +275,11 @@ jobs:
               if len(apps) != 1:
                   raise SystemExit('Expected exactly one macOS application bundle.')
               binary = apps[0] / 'Contents/MacOS/iptv'
-              subprocess.run(['lipo', '-verify_arch', 'arm64', 'x86_64', str(binary)], check=True)
+              # lipo -archs prints the slices; -verify_arch parses its arguments
+              # differently across Xcode releases, so the check happens here.
+              archs = set(subprocess.run(['lipo', '-archs', str(binary)], check=True, capture_output=True, text=True).stdout.split())
+              if archs != {'arm64', 'x86_64'}:
+                  raise SystemExit(f'Expected a universal arm64+x86_64 binary, found slices: {sorted(archs)}')
               subprocess.run(['tar', '-czf', str(out / (prefix + '.app.tar.gz')), '-C', str(apps[0].parent), apps[0].name], check=True)
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -324,13 +328,15 @@ jobs:
           node scripts/project.mjs release
           npm ci
           cargo fetch --manifest-path src-tauri/Cargo.toml --locked
-      - name: Install latest stable Android SDK tooling and NDK
+      - name: Install the latest stable Android NDK and build tools
         run: |
           set -euo pipefail
           : "${ANDROID_HOME:?The GitHub-hosted Ubuntu runner must provide the Android SDK}"
+          # The runner's own command-line tools stay in place: reinstalling
+          # cmdline-tools;latest lands in a second directory that sdkmanager then flags.
           manager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           "$manager" --licenses < <(yes) > /dev/null
-          "$manager" --channel=0 'cmdline-tools;latest' 'platform-tools'
+          "$manager" --channel=0 'platform-tools'
           "$manager" --list --channel=0 > "$RUNNER_TEMP/sdk-packages.txt"
           python - <<'PY'
           import os, pathlib, re, subprocess
@@ -338,11 +344,10 @@ jobs:
           listing = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'sdk-packages.txt').read_text()
           versions = lambda prefix: sorted(set(re.findall(r'^\s*' + prefix + r';(\d+\.\d+\.\d+)\s*\|', listing, re.M)), key=lambda x: tuple(map(int, x.split('.'))))
           ndks, tools = versions('ndk'), versions('build-tools')
-          platforms = [int(x) for x in re.findall(r'^\s*platforms;android-(\d+)\s*\|', listing, re.M)]
-          if not ndks or not tools or not platforms:
-              raise SystemExit('Unable to resolve stable Android SDK packages.')
+          if not ndks or not tools:
+              raise SystemExit('Unable to resolve stable Android NDK and build-tools packages.')
           manager = str(sdk / 'cmdline-tools/latest/bin/sdkmanager')
-          subprocess.run([manager, '--channel=0', f'ndk;{ndks[-1]}', f'build-tools;{tools[-1]}', f'platforms;android-{max(platforms)}'], check=True)
+          subprocess.run([manager, '--channel=0', f'ndk;{ndks[-1]}', f'build-tools;{tools[-1]}'], check=True)
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write(f'NDK_HOME={sdk / "ndk" / ndks[-1]}\n')
               env.write(f'ANDROID_NDK_HOME={sdk / "ndk" / ndks[-1]}\n')
@@ -359,7 +364,7 @@ jobs:
           fi
           node scripts/android-configure.mjs
           node scripts/android-configure.mjs --check
-          # Install the SDKs actually referenced by the generated host and plugin.
+          # Install the SDK platforms actually referenced by the generated host and plugin.
           python - <<'PY'
           import os, pathlib, re, subprocess
           files = [pathlib.Path('src-tauri/gen/android/app/build.gradle.kts'), pathlib.Path('src-tauri/plugins/player/android/build.gradle.kts')]
@@ -368,9 +373,20 @@ jobs:
               matches = re.findall(r'\bcompileSdk\s*=\s*(\d+)', path.read_text())
               if len(matches) != 1:
                   raise SystemExit(f'Review the changed compileSdk declaration in {path}.')
-              levels.update(matches)
+              levels.add(int(matches[0]))
+          listing = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'sdk-packages.txt').read_text()
+          available = set(re.findall(r'^\s*(platforms;android-\d+(?:\.\d+)?)\s*\|', listing, re.M))
+          packages = []
+          for level in sorted(levels):
+              # From API 37 Google publishes stable platforms as minor revisions
+              # (platforms;android-37.0); the Android Gradle plugin resolves
+              # compileSdk = 37 to that .0 platform, so there is no plain android-37.
+              found = [name for name in (f'platforms;android-{level}', f'platforms;android-{level}.0') if name in available]
+              if not found:
+                  raise SystemExit(f'No stable SDK platform publishes API level {level}: {sorted(available)}')
+              packages.append(found[0])
           manager = pathlib.Path(os.environ['ANDROID_HOME']) / 'cmdline-tools/latest/bin/sdkmanager'
-          subprocess.run([str(manager), '--channel=0', *[f'platforms;android-{x}' for x in sorted(levels)]], check=True)
+          subprocess.run([str(manager), '--channel=0', *packages], check=True)
           PY
       - name: Build release APK and AAB using Tauri's Android runner
         env:
