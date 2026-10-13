@@ -109,6 +109,10 @@ WebKit's native HLS player sends exactly those probes and reports any failure of
 
 The unlock screen, the Lock button, the `unlock`/`lock` commands, the `unlocked`/`vaultExists` status fields, `Error::Locked`, the Argon2 dependency and the vault page styles are gone. Secrets stay sealed with XChaCha20-Poly1305 under a random per-profile key (`credentials.key`, `0600`) that `Core::open` creates on first start; a profile still holding the former `credentials.vault` is reset once. Checks: clippy, Rust tests (new: key persistence, context binding, zeroization, damaged-key rejection, legacy-profile reset through `Core::open`), unit, SQL, tooling, typecheck, Biome, web build and browser specifications pass; `make check` passes.
 
+## Label filters on both iptv-org methods (October 13, 2026)
+
+Live `streams.json` carries exactly two labels, `Not 24/7` (1,805 streams) and `Geo-blocked` (1,202), which the catalogue selection already matched; the gap was that official playlists mark the same labels in channel names (`[Geo-blocked]`, `[Not 24/7]`) and were never filtered, and the toggles were hidden for that method. Both exclusions now default to on, apply to official playlists through the name markers (`Filters::excludes_official_name`) and are offered for both methods. Checks: clippy, Rust tests (defaults, name markers, catalogue exclusion), unit, typecheck, Biome, web build and browser specifications pass.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

@@ -462,7 +462,11 @@ fn org_config(countries: &[&str], mode: CountryMode) -> Config {
             mode,
             ..Default::default()
         },
-        filters: Default::default(),
+        filters: iptv_org::Filters {
+            exclude_geo_blocked_label: false,
+            exclude_not247_label: false,
+            ..Default::default()
+        },
         playlist: Default::default(),
         cache: Default::default(),
     }
@@ -745,6 +749,24 @@ fn iptv_org_filters_aliases_and_playlist_options_are_honoured() {
     );
     assert!(!any_scheme.iter().any(|e| e.url.starts_with("rtmp://")));
     assert!(!any_scheme.iter().any(|e| e.tvg_id == "Geo.de@SD"));
+    // Label exclusions are on by default and official playlists carry them as name markers.
+    let defaults = iptv_org::Filters::default();
+    assert!(defaults.exclude_geo_blocked_label && defaults.exclude_not247_label);
+    let mut standard = org_config(&["DE"], CountryMode::CoverageStrict);
+    standard.filters = iptv_org::Filters::default();
+    assert!(
+        !ids(&iptv_org::select(&data, &standard, TODAY, https_only).unwrap())
+            .iter()
+            .any(|id| id.contains("Geo.de"))
+    );
+    assert!(defaults.excludes_official_name("360 (720p) [Not 24/7]"));
+    assert!(defaults.excludes_official_name("+TV (576p) [Geo-blocked]"));
+    assert!(!defaults.excludes_official_name("A Haber (1080p)"));
+    assert!(
+        !plain
+            .filters
+            .excludes_official_name("360 (720p) [Geo-blocked]")
+    );
     // Configuration validation mirrors the contract.
     assert!(
         org_config(&["DE"], CountryMode::CoverageStrict)

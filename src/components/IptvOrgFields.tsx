@@ -150,7 +150,7 @@ export function IptvOrgFields({
       </label>
       <p className="field-help">
         {catalogueMode
-          ? 'Downloads the public channel, feed, stream and geography datasets, then applies one deterministic policy: country mode, categories and languages combine with AND; values within a field with OR. Adult, blocklisted and closed channels are excluded by default.'
+          ? 'Downloads the public channel, feed, stream and geography datasets, then applies one deterministic policy: country mode, categories and languages combine with AND; values within a field with OR. Adult, blocklisted and closed channels and streams labelled Geo-blocked or Not 24/7 are excluded by default.'
           : 'Fetches the prebuilt playlists published by iptv-org. Country playlists follow broadcast coverage, not channel origin. Several selections are merged into one source.'}
       </p>
       {catalogState === 'loading' && (
@@ -293,6 +293,27 @@ export function IptvOrgFields({
           </p>
         </>
       )}
+      <div className="option-grid">
+        <Toggle
+          name="org-geo"
+          label="Exclude streams labelled Geo-blocked"
+          checked={values.excludeGeoBlockedLabel}
+          disabled={disabled}
+          onChange={(value) => set('excludeGeoBlockedLabel', value)}
+        />
+        <Toggle
+          name="org-not247"
+          label="Exclude streams labelled Not 24/7"
+          checked={values.excludeNot247Label}
+          disabled={disabled}
+          onChange={(value) => set('excludeNot247Label', value)}
+        />
+      </div>
+      <p className="field-help">
+        {catalogueMode
+          ? 'Labels come from the iptv-org stream records; a channel stays when another of its streams is unlabelled.'
+          : 'Official playlists carry these labels in the channel name, for example "[Not 24/7]"; matching entries are skipped at import.'}
+      </p>
       {catalogueMode && (
         <>
           <div className="option-grid">
@@ -316,20 +337,6 @@ export function IptvOrgFields({
               checked={values.excludeClosed}
               disabled={disabled}
               onChange={(value) => set('excludeClosed', value)}
-            />
-            <Toggle
-              name="org-geo"
-              label="Exclude streams labelled Geo-blocked"
-              checked={values.excludeGeoBlockedLabel}
-              disabled={disabled}
-              onChange={(value) => set('excludeGeoBlockedLabel', value)}
-            />
-            <Toggle
-              name="org-not247"
-              label="Exclude streams labelled Not 24/7"
-              checked={values.excludeNot247Label}
-              disabled={disabled}
-              onChange={(value) => set('excludeNot247Label', value)}
             />
             <Toggle
               name="org-alternatives"

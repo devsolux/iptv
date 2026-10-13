@@ -429,6 +429,7 @@ impl Core {
                         // as the catalogue method does; HTTP needs the source's consent.
                         if url::Url::parse(&channel.stream.url)
                             .is_ok_and(|url| policy.check_url(&url).is_err())
+                            || org.filters.excludes_official_name(&channel.name)
                         {
                             skipped += 1;
                             return Ok(());
@@ -448,7 +449,7 @@ impl Core {
                 }
                 if count == 0 {
                     return Err(Error::Invalid(if skipped > 0 {
-                        "Every stream in the selected playlists uses an address this source does not allow; enable unencrypted HTTP for the source and refresh."
+                        "Every stream in the selected playlists was excluded by this source's address policy or label filters; allow HTTP or relax the filters and refresh."
                     } else {
                         "The selected iptv-org playlists contain no channels; the previous catalogue was preserved."
                     }));

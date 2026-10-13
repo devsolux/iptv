@@ -62,6 +62,8 @@ test('the playlist method expands typed lists into ordered official picks', () =
   assert.equal(built.config.method, 'playlist');
   assert.deepEqual(built.config.playlists, [{ kind: 'country', code: 'DE' }]);
   assert.deepEqual(built.config.geography.countries, []);
+  assert.equal(built.config.filters.excludeGeoBlockedLabel, true);
+  assert.equal(built.config.filters.excludeNot247Label, true);
   const empty = buildIptvOrgConfig(defaultIptvOrgValues);
   assert.ok(!empty.ok);
 });

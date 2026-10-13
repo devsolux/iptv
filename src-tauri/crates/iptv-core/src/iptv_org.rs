@@ -121,9 +121,9 @@ pub struct Filters {
     pub exclude_blocked: bool,
     #[serde(default = "yes")]
     pub exclude_closed: bool,
-    #[serde(default)]
+    #[serde(default = "yes")]
     pub exclude_geo_blocked_label: bool,
-    #[serde(default)]
+    #[serde(default = "yes")]
     pub exclude_not247_label: bool,
 }
 impl Default for Filters {
@@ -134,9 +134,17 @@ impl Default for Filters {
             exclude_nsfw: true,
             exclude_blocked: true,
             exclude_closed: true,
-            exclude_geo_blocked_label: false,
-            exclude_not247_label: false,
+            exclude_geo_blocked_label: true,
+            exclude_not247_label: true,
         }
+    }
+}
+impl Filters {
+    /// Official playlists carry stream labels as name markers such as `[Not 24/7]`.
+    pub fn excludes_official_name(&self, name: &str) -> bool {
+        let lower = name.to_ascii_lowercase();
+        (self.exclude_geo_blocked_label && lower.contains("[geo-blocked]"))
+            || (self.exclude_not247_label && lower.contains("[not 24/7]"))
     }
 }
 
