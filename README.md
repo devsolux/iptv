@@ -1,6 +1,6 @@
 # IPTV
 
-**Version 1.0.0 · Application identifier `com.devsolux.iptv`**
+![IPTV: Live TV library with channel artwork](docs/iptv.png)
 
 A unified Ionic React / Tauri 2 application for live TV: bring your own M3U playlists and XMLTV guides, or build a library from the public [iptv-org](https://github.com/iptv-org/iptv) datasets. Catalogue processing, persistence, credentials, network policy, artwork and playback authorization belong to Rust; the UI owns presentation and remote interaction. Desktop and Android/Fire TV share one code base.
 
