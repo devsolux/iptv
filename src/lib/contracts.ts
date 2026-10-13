@@ -25,6 +25,18 @@ export const channelSchema = z.object({
   favorite: z.boolean(),
   variants: z.number().int().min(1).max(32),
   hasEpg: z.boolean(),
+  logoUrl: z
+    .string()
+    .url()
+    .refine((value) => {
+      const url = new URL(value);
+      return (
+        url.protocol === 'http:' &&
+        url.hostname === '127.0.0.1' &&
+        url.pathname.startsWith('/logo/')
+      );
+    }, 'Artwork must come from the local relay.')
+    .nullable(),
 });
 export const channelPageSchema = z.object({
   items: z.array(channelSchema).max(120),
@@ -174,6 +186,7 @@ export interface SourceInput {
   allowHttp: boolean;
   allowLan: boolean;
   cdnHosts: string[];
+  acceptInvalidCerts: boolean;
   countryCode: string;
   /** Null for own M3U playlists; their contract is otherwise unchanged. */
   iptvOrg: IptvOrgConfig | null;

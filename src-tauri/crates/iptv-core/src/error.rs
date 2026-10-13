@@ -31,6 +31,14 @@ pub enum Error {
     Storage,
     #[error("The native player could not start.")]
     Player,
+    #[error(
+        "The stream did not respond or refused the request. It may be offline, geo-blocked or need another variant."
+    )]
+    Stream,
+    #[error(
+        "A stream address was blocked by this source's network policy (unencrypted HTTP, an unverified certificate, a private address or an unsupported redirect). Adjust the source's permissions if its streams need them."
+    )]
+    StreamPolicy,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +63,8 @@ impl Error {
             Self::Unsupported => "UNSUPPORTED",
             Self::Storage => "STORAGE",
             Self::Player => "PLAYER",
+            Self::Stream => "STREAM",
+            Self::StreamPolicy => "STREAM_POLICY",
         };
         PublicError {
             code,

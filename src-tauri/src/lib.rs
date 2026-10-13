@@ -131,7 +131,7 @@ fn exit_app(app: tauri::AppHandle) {
 }
 #[tauri::command]
 async fn query_channels(state: State<'_, AppState>, query: ChannelQuery) -> Reply<ChannelPage> {
-    worker(&state, move |c| c.database.channels(&query)).await
+    worker(&state, move |c| c.channels(&query)).await
 }
 #[tauri::command]
 async fn query_groups(state: State<'_, AppState>, source_id: Option<String>) -> Reply<Vec<String>> {

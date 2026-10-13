@@ -14,6 +14,9 @@ pub struct SourceInput {
     pub allow_lan: bool,
     #[serde(default)]
     pub cdn_hosts: Vec<String>,
+    /// Explicit consent to unverified TLS certificates for this source's requests.
+    #[serde(default)]
+    pub accept_invalid_certs: bool,
     #[serde(default)]
     pub country_code: String,
     /// Present only for iptv-org sources; own M3U playlists leave it absent.
@@ -102,6 +105,10 @@ pub struct Channel {
     pub favorite: bool,
     pub variants: i64,
     pub has_epg: bool,
+    #[serde(skip)]
+    pub has_logo: bool,
+    /// Loopback relay address of the channel artwork, never the upstream image URL.
+    pub logo_url: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

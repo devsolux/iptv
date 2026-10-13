@@ -15,6 +15,10 @@ use std::{
 use tokio::sync::Mutex;
 use url::Url;
 
+/// Sent when a playlist supplies no agent of its own; many stream hosts refuse anonymous clients.
+pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const MAX_REDIRECTS: usize = 10;
+
 #[derive(Clone)]
 pub struct NetworkPolicy {
     pub allow_http: bool,
@@ -23,6 +27,7 @@ pub struct NetworkPolicy {
     /// Aggregator sources: any public host passes the host check; IP, scheme, redirect
     /// and DNS checks still apply to every request.
     open_hosts: bool,
+    pub accept_invalid_certs: bool,
 }
 impl NetworkPolicy {
     pub fn new(initial: &str, source: &SourceInput) -> Result<Self> {
@@ -54,9 +59,21 @@ impl NetworkPolicy {
             allow_lan: source.allow_lan,
             hosts,
             open_hosts: source.is_aggregator(),
+            accept_invalid_certs: source.accept_invalid_certs,
         };
         policy.check_url(&url)?;
         Ok(policy)
+    }
+    /// Artwork downloads: any public host over the source's permitted transports. This policy
+    /// never authorizes streams; it only decides which image addresses may be fetched.
+    pub fn images(source: &SourceInput) -> Self {
+        Self {
+            allow_http: source.allow_http,
+            allow_lan: source.allow_lan,
+            hosts: HashSet::new(),
+            open_hosts: true,
+            accept_invalid_certs: source.accept_invalid_certs,
+        }
     }
     /// Read-only HTTPS access to exactly one public host: catalogue metadata, never streams.
     pub fn public(initial: &str) -> Result<Self> {
@@ -67,6 +84,7 @@ impl NetworkPolicy {
             allow_lan: false,
             hosts: HashSet::from([host]),
             open_hosts: false,
+            accept_invalid_certs: false,
         };
         policy.check_url(&url)?;
         Ok(policy)
@@ -172,12 +190,15 @@ impl NetworkPolicy {
         headers: &BTreeMap<String, String>,
     ) -> Result<reqwest::blocking::Response> {
         let mut url = Url::parse(initial).map_err(|_| Error::Policy)?;
-        for _ in 0..=5 {
+        for _ in 0..=MAX_REDIRECTS {
             let addresses = self.resolve_blocking(&url)?;
             let host = url.host_str().ok_or(Error::Policy)?;
             let client = reqwest::blocking::Client::builder()
                 .no_proxy()
                 .redirect(Policy::none())
+                .user_agent(DEFAULT_USER_AGENT)
+                .http1_only()
+                .danger_accept_invalid_certs(self.accept_invalid_certs)
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(180))
                 .resolve_to_addrs(host, &addresses)
@@ -264,6 +285,8 @@ pub struct MediaNetwork {
     policy: NetworkPolicy,
     headers: BTreeMap<String, String>,
     clients: Arc<Mutex<ClientCache>>,
+    /// One jar per session: tokens set by the playlist response must reach its segments.
+    jar: Arc<reqwest::cookie::Jar>,
 }
 impl MediaNetwork {
     pub fn new(policy: NetworkPolicy, headers: BTreeMap<String, String>) -> Self {
@@ -271,6 +294,7 @@ impl MediaNetwork {
             policy,
             headers,
             clients: Arc::new(Mutex::new(HashMap::new())),
+            jar: Arc::new(reqwest::cookie::Jar::default()),
         }
     }
     pub fn check(&self, url: &Url) -> Result<()> {
@@ -286,9 +310,14 @@ impl MediaNetwork {
             return Ok(client.clone());
         }
         let addresses = self.policy.resolve(url).await?;
+        // HTTP/1.1 only: stream hosts are routinely fragile over negotiated HTTP/2.
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(Policy::none())
+            .user_agent(DEFAULT_USER_AGENT)
+            .http1_only()
+            .cookie_provider(self.jar.clone())
+            .danger_accept_invalid_certs(self.policy.accept_invalid_certs)
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(2)
@@ -308,7 +337,7 @@ impl MediaNetwork {
         head: bool,
     ) -> Result<reqwest::Response> {
         let mut url = initial;
-        for _ in 0..=5 {
+        for _ in 0..=MAX_REDIRECTS {
             let client = self.client(&url).await?;
             let method = if head {
                 reqwest::Method::HEAD

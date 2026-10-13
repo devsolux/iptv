@@ -1374,3 +1374,31 @@ select {
 .option-grid .checkbox-label {
   margin-bottom: 0;
 }
+
+/* channel artwork served by the loopback relay */
+.channel-logo {
+  display: block;
+  width: 100%;
+  height: 58px;
+  object-fit: contain;
+  object-position: left center;
+  margin: auto 0;
+  padding: 6px 0;
+}
+.guide-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.guide-identity strong {
+  flex: 1;
+}
+.channel-logo.compact {
+  width: 44px;
+  height: 26px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  object-position: center;
+}

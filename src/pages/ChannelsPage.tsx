@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
+import { ChannelArt } from '../components/ChannelArt';
 import { Empty, ErrorNotice, Loading } from '../components/Feedback';
 import { Filters } from '../components/Filters';
 import { Flag } from '../components/Flag';
@@ -241,12 +242,7 @@ export default function ChannelsPage({ favoritesOnly = false }: { favoritesOnly?
                           {channel.favorite && <Icon name="star" size={14} />}
                         </span>
                       </div>
-                      <div className="channel-monogram" aria-hidden="true">
-                        {channel.name
-                          .replace(/^Channel /, '')
-                          .slice(0, 3)
-                          .toUpperCase()}
-                      </div>
+                      <ChannelArt name={channel.name} logoUrl={channel.logoUrl} />
                       <div className="channel-card-bottom">
                         <span className="channel-name">{channel.name}</span>
                         <Flag code={channel.country.split(/[,;\s]/)[0] ?? ''} />

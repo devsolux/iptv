@@ -18,9 +18,10 @@ const CHANNEL_FILTER: &str = "FROM channel_entries c JOIN sources s ON s.id=c.so
             AND (?5=0 OR EXISTS(SELECT 1 FROM favorites f WHERE f.channel_id=c.id)) AND (?6 IS NULL OR EXISTS(SELECT 1 FROM channel_countries cc WHERE cc.generation=c.generation AND cc.channel_id=c.id AND cc.code=?6))";
 
 /// Ordered schema migrations; each ends by setting `user_version` to its position.
-const MIGRATIONS: [&str; 2] = [
+const MIGRATIONS: [&str; 3] = [
     include_str!("../migrations/001_initial.sql"),
     include_str!("../migrations/002_source_kind.sql"),
+    include_str!("../migrations/003_channel_logo.sql"),
 ];
 
 #[derive(Clone)]
@@ -177,7 +178,8 @@ impl Database {
         let sql = format!("SELECT c.id,c.name,c.source_id,c.country,
             EXISTS(SELECT 1 FROM favorites f WHERE f.channel_id=c.id),
             (SELECT COUNT(*) FROM stream_variants v WHERE v.generation=c.generation AND v.channel_id=c.id),
-            EXISTS(SELECT 1 FROM epg_links e WHERE e.generation=c.generation AND e.channel_id=c.id)
+            EXISTS(SELECT 1 FROM epg_links e WHERE e.generation=c.generation AND e.channel_id=c.id),
+            c.has_logo
             {filter} ORDER BY c.name COLLATE NOCASE,c.id LIMIT ?7 OFFSET ?8");
         let items = {
             let mut statement = tx.prepare(&sql)?;
@@ -201,6 +203,8 @@ impl Database {
                         favorite: r.get(4)?,
                         variants: r.get(5)?,
                         has_epg: r.get(6)?,
+                        has_logo: r.get(7)?,
+                        logo_url: None,
                     })
                 },
             )?;
@@ -397,6 +401,30 @@ impl Database {
             serde_json::from_slice(&vault.open(&format!("stream:{}", record.2), &record.3)?)?;
         Ok((record.0, record.1, secret, config, record.4))
     }
+    /// The upstream artwork URL of an active channel plus its source configuration, so the
+    /// image policy can apply the source's transport consents. Never exposed to the UI.
+    pub fn channel_logo(&self, id: &str, vault: &Vault) -> Result<(String, SourceInput)> {
+        valid_id(id)?;
+        let connection = self.connect()?;
+        let (source_id, metadata): (String, Vec<u8>) = connection
+            .query_row(
+                "SELECT c.source_id,c.metadata FROM channel_entries c JOIN sources s ON s.active_generation=c.generation WHERE c.id=?1 AND c.has_logo=1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or(Error::NotFound)?;
+        let plain = vault.open(&format!("metadata:{id}"), &metadata)?;
+        let value: serde_json::Value = serde_json::from_slice(&plain)?;
+        let url = value
+            .get("logo")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .ok_or(Error::NotFound)?
+            .to_owned();
+        let config = self.source_config(&source_id, vault)?;
+        Ok((url, config))
+    }
     pub fn importer<'a>(&self, source_id: &str, vault: &'a Vault) -> Result<Import<'a>> {
         valid_id(source_id)?;
         let connection = self.connect()?;
@@ -575,6 +603,7 @@ fn write_channel(
     let stream = Zeroizing::new(serde_json::to_vec(&channel.stream)?);
     let variant = Uuid::new_v5(&id, &stream).to_string();
     let secret = vault.seal(&format!("stream:{variant}"), &stream)?;
+    let has_logo = channel.logo.starts_with("https://") || channel.logo.starts_with("http://");
     let metadata = Zeroizing::new(serde_json::to_vec(
         &serde_json::json!({"logo":channel.logo,"catchup":channel.catchup}),
     )?);
@@ -586,7 +615,7 @@ fn write_channel(
         normalized(&channel.tvg_name)
     };
     c.execute(
-        "INSERT OR IGNORE INTO channel_entries VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT OR IGNORE INTO channel_entries VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
             source_id,
             generation,
@@ -597,7 +626,8 @@ fn write_channel(
             epg_name,
             channel.country,
             channel.shift_seconds,
-            metadata
+            metadata,
+            has_logo
         ],
     )?;
     c.execute(

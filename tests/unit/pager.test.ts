@@ -22,6 +22,7 @@ function page(query: ChannelQuery, revision = 1): ChannelPage {
         favorite: false,
         hasEpg: false,
         variants: 1,
+        logoUrl: null,
       },
     ],
     total: 50000,

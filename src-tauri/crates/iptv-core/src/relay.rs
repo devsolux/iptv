@@ -17,7 +17,7 @@ use futures_util::StreamExt;
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -116,6 +116,9 @@ struct Inner {
     base: String,
     current: Mutex<Option<Arc<Session>>>,
     epoch: AtomicU64,
+    /// Unguessable path segment for artwork requests; the UI learns it only through DTOs.
+    logo_token: String,
+    logos: Mutex<Option<Weak<crate::Core>>>,
 }
 #[derive(Clone)]
 pub struct Relay {
@@ -141,6 +144,8 @@ impl Relay {
             base: format!("http://127.0.0.1:{port}"),
             current: Mutex::new(None),
             epoch: AtomicU64::new(0),
+            logo_token: Uuid::new_v4().to_string(),
+            logos: Mutex::new(None),
         });
         let router = Router::new()
             .route(
@@ -151,6 +156,7 @@ impl Relay {
                 "/media/{session}/{resource}/{*values}",
                 get(template).options(preflight),
             )
+            .route("/logo/{token}/{channel}", get(logo))
             .with_state(HttpState {
                 inner: inner.clone(),
             });
@@ -165,17 +171,16 @@ impl Relay {
         if !matches!(root.scheme(), "http" | "https") {
             return Err(Error::Unsupported);
         }
-        let network = MediaNetwork::new(NetworkPolicy::new(&secret.url, config)?, secret.headers);
-        // A bounded probe determines the engine without assuming a filename extension.
+        let network = MediaNetwork::new(
+            NetworkPolicy::new(&secret.url, config).map_err(stream_error)?,
+            secret.headers,
+        );
+        // A bounded probe determines the engine without assuming a filename extension. It is a
+        // plain GET read for 4 KiB: some stream hosts reject Range requests on playlists.
         let response = network
-            .get(root.clone(), Some("bytes=0-4095"), false)
-            .await?;
-        let response = if response.status().as_u16() == 416 {
-            drop(response);
-            network.get(root.clone(), None, false).await?
-        } else {
-            response
-        };
+            .get(root.clone(), None, false)
+            .await
+            .map_err(stream_error)?;
         let content_type = response
             .headers()
             .get("content-type")
@@ -190,7 +195,7 @@ impl Relay {
                     let n = chunk.len().min(4096 - prefix.len());
                     prefix.extend_from_slice(&chunk[..n]);
                 }
-                Some(Err(_)) => return Err(Error::Network),
+                Some(Err(_)) => return Err(Error::Stream),
                 None => break,
             }
         }
@@ -239,15 +244,85 @@ impl Relay {
         })
     }
     pub fn close(&self, id: Option<&str>) {
-        if let Ok(mut guard) = self.inner.current.lock()
-            && (id.is_none() || guard.as_ref().is_some_and(|s| Some(s.id.as_str()) == id))
-        {
-            self.inner.epoch.fetch_add(1, Ordering::SeqCst);
-            if let Some(session) = guard.take() {
+        if let Ok(mut guard) = self.inner.current.lock() {
+            if id.is_none() {
+                // Locking or removing a source also invalidates a session still being prepared.
+                self.inner.epoch.fetch_add(1, Ordering::SeqCst);
+            }
+            // Closing one finished session must not cancel the next session being prepared.
+            if (id.is_none() || guard.as_ref().is_some_and(|s| Some(s.id.as_str()) == id))
+                && let Some(session) = guard.take()
+            {
                 session.cancel.send_replace(true);
             }
         }
     }
+    /// Gives artwork requests access to the catalogue; called once after `Core` exists.
+    pub fn attach(&self, core: &Arc<crate::Core>) {
+        if let Ok(mut logos) = self.inner.logos.lock() {
+            *logos = Some(Arc::downgrade(core));
+        }
+    }
+    pub fn logo_url(&self, channel: &str) -> String {
+        format!(
+            "{}/logo/{}/{channel}",
+            self.inner.base, self.inner.logo_token
+        )
+    }
+}
+fn stream_error(error: Error) -> Error {
+    match error {
+        Error::Network => Error::Stream,
+        Error::Policy => Error::StreamPolicy,
+        other => other,
+    }
+}
+fn check_host(state: &HttpState, headers: &HeaderMap) -> Result<()> {
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(Error::Policy)?;
+    if Some(host) != state.inner.base.strip_prefix("http://") {
+        return Err(Error::Policy);
+    }
+    Ok(())
+}
+async fn logo(
+    State(state): State<HttpState>,
+    Path((token, channel)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let result = async {
+        check_host(&state, &headers)?;
+        if token != state.inner.logo_token {
+            return Err(Error::NotFound);
+        }
+        crate::db::valid_id(&channel)?;
+        let core = {
+            let logos = state.inner.logos.lock().map_err(|_| Error::Storage)?;
+            logos.as_ref().and_then(Weak::upgrade)
+        }
+        .ok_or(Error::NotFound)?;
+        let (bytes, content_type) = core.logo(&channel).await?;
+        let mut response = (StatusCode::OK, bytes).into_response();
+        let headers = response.headers_mut();
+        headers.insert("content-type", HeaderValue::from_static(content_type));
+        headers.insert(
+            "cache-control",
+            HeaderValue::from_static("private, max-age=86400"),
+        );
+        headers.insert(
+            "x-content-type-options",
+            HeaderValue::from_static("nosniff"),
+        );
+        headers.insert(
+            "content-security-policy",
+            HeaderValue::from_static("default-src 'none'"),
+        );
+        Ok(response)
+    }
+    .await;
+    result.unwrap_or_else(public_http_error)
 }
 fn origin(headers: &HeaderMap) -> Result<Option<HeaderValue>> {
     let Some(value) = headers.get("origin") else {
@@ -267,19 +342,7 @@ fn origin(headers: &HeaderMap) -> Result<Option<HeaderValue>> {
     Ok(Some(value.clone()))
 }
 fn session(state: &HttpState, id: &str, headers: &HeaderMap) -> Result<Arc<Session>> {
-    let host = headers
-        .get("host")
-        .and_then(|v| v.to_str().ok())
-        .ok_or(Error::Policy)?;
-    if host
-        != state
-            .inner
-            .base
-            .strip_prefix("http://")
-            .ok_or(Error::Policy)?
-    {
-        return Err(Error::Policy);
-    }
+    check_host(state, headers)?;
     origin(headers)?;
     let guard = state.inner.current.lock().map_err(|_| Error::Storage)?;
     let current = guard.as_ref().ok_or(Error::NotFound)?;
@@ -496,7 +559,7 @@ async fn dispatch(
 fn public_http_error(error: Error) -> Response {
     let status = match error {
         Error::NotFound | Error::Cancelled => StatusCode::GONE,
-        Error::Policy => StatusCode::FORBIDDEN,
+        Error::Policy | Error::StreamPolicy => StatusCode::FORBIDDEN,
         Error::Limit => StatusCode::PAYLOAD_TOO_LARGE,
         Error::Unsupported => StatusCode::UNSUPPORTED_MEDIA_TYPE,
         Error::Busy => StatusCode::SERVICE_UNAVAILABLE,

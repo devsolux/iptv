@@ -34,7 +34,7 @@
       "command": "cargo clippy --workspace --all-targets --locked -- -D warnings",
       "result": "passed"
     },
-    { "command": "cargo test --workspace --locked", "result": "passed", "tests": 21, "ignored": 1 },
+    { "command": "cargo test --workspace --locked", "result": "passed", "tests": 22, "ignored": 3 },
     { "command": "python3 -m unittest discover -s tests/sql", "result": "passed", "tests": 12 },
     { "command": "python3 -m unittest discover -s tests/tools", "result": "passed", "tests": 7 },
     { "command": "npm run build:web", "result": "passed" },
@@ -44,6 +44,18 @@
       "result": "passed",
       "network": "iptv-org.github.io",
       "observed": "31562 channels, 45155 feeds, 17968 streams parsed; 28 DE/TR news entries selected; 304 official UK entries parsed"
+    },
+    {
+      "command": "cargo test -p iptv-core --test core -- --ignored live_relay",
+      "result": "passed",
+      "network": "iptv-org.github.io and a public stream host",
+      "observed": "HLS stream relayed through the loopback relay; manifest rewritten and first segment fetched"
+    },
+    {
+      "command": "cargo test -p iptv-core --test core -- --ignored live_core",
+      "result": "passed",
+      "network": "iptv-org.github.io and a public image host",
+      "observed": "countries/de.m3u imported inside Core (288 channels); PNG artwork served by the relay logo route and from the cache"
     },
     {
       "command": "npm run tauri -- build --no-bundle -- --locked",
@@ -72,7 +84,8 @@
     "physical Fire TV tests",
     "performance benchmarks",
     "dependency license review",
-    "iptv-org import and playback inside the native application"
+    "iptv-org playback inside the native application",
+    "artwork rendering inside the native WebView"
   ],
   "openItems": ["Exclude vendored public/flags from Biome in biome.json"],
   "originalArchiveHashes": {

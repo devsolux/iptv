@@ -97,6 +97,12 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
     `NetworkPolicy::public` (single host, HTTPS) is the only policy for the catalogue command.
 15. **Migrations.** `db::MIGRATIONS` is ordered; each file ends with `PRAGMA user_version = N`.
     `tests/sql/test_catalogue.py` runs them all, so a new migration must also keep that suite green.
+16. **Artwork.** Logos reach the UI only through `/logo/{token}/{channel}` on the relay
+    (`Core::logo`, `logos.rs`, `NetworkPolicy::images`). Never put upstream image URLs in DTOs or
+    widen the CSP `img-src` beyond `'self' data: http://127.0.0.1:*`.
+17. **Stream clients.** `MediaNetwork` and `get_blocking` send `DEFAULT_USER_AGENT`, speak
+    HTTP/1.1, keep a per-session cookie jar and honour `accept_invalid_certs` only when the source
+    consented. Playback errors surface as `Error::Stream` / `Error::StreamPolicy`, never raw text.
 
 ## Testing notes
 

@@ -20,7 +20,7 @@ class CatalogueTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.db.execute("PRAGMA foreign_keys=ON")
-        for name in ["001_initial.sql", "002_source_kind.sql"]:
+        for name in ["001_initial.sql", "002_source_kind.sql", "003_channel_logo.sql"]:
             self.db.executescript((CORE / "migrations" / name).read_text())
         self.db.execute("INSERT INTO sources(id,name,config,active_generation,updated_at,has_epg) VALUES('source','My source',X'0102',NULL,NULL,1)")
         self.generation("old")
@@ -36,7 +36,7 @@ class CatalogueTests(unittest.TestCase):
         self.db.execute("INSERT INTO generations VALUES(?, 'source', 'staging', 0)", (name,))
 
     def channel(self, generation, key, name, tvg_id=""):
-        self.db.execute("INSERT INTO channel_entries VALUES('source',?,?,?,?,?,'','DE',0,X'0102')", (generation,key,name,name.lower(),tvg_id))
+        self.db.execute("INSERT INTO channel_entries(source_id,generation,id,name,normalized_name,tvg_id,epg_name,country,shift_seconds,metadata) VALUES('source',?,?,?,?,?,'','DE',0,X'0102')", (generation,key,name,name.lower(),tvg_id))
         self.db.execute("INSERT INTO stream_variants VALUES(?,?,?,X'0102',0)", (generation,key,"variant"))
 
     def epg(self, generation, feed, key, name, priority=0):
@@ -119,8 +119,9 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT COUNT(*) " + CHANNEL_FILTER, ("%", r"%\%%", None, None, False, None)).fetchone()[0], 0)
 
     def test_sqlite_schema_is_strict_and_valid(self):
-        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 3)
         self.assertEqual(self.db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(self.db.execute("SELECT has_logo FROM channel_entries").fetchone()[0], 0)
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("INSERT INTO sources(id,name,config) VALUES('bad','Bad','unencrypted text')")
         self.assertEqual(self.db.execute("SELECT kind FROM sources").fetchone()[0], "m3u")
@@ -135,6 +136,8 @@ class CatalogueTests(unittest.TestCase):
         db.executescript((CORE / "migrations/002_source_kind.sql").read_text())
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
         self.assertEqual(db.execute("SELECT kind FROM sources WHERE id='legacy'").fetchone()[0], "m3u")
+        db.executescript((CORE / "migrations/003_channel_logo.sql").read_text())
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
         self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
         db.close()
 

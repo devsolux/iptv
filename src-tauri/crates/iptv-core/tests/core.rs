@@ -38,6 +38,7 @@ fn source() -> SourceInput {
         allow_http: false,
         allow_lan: false,
         cdn_hosts: vec![],
+        accept_invalid_certs: false,
         country_code: "DE".into(),
         iptv_org: None,
     }
@@ -442,6 +443,7 @@ fn org_source(config: Config) -> SourceInput {
         allow_http: false,
         allow_lan: false,
         cdn_hosts: vec![],
+        accept_invalid_certs: false,
         country_code: String::new(),
         iptv_org: Some(config),
     }
@@ -910,7 +912,7 @@ fn version_one_profiles_migrate_and_record_the_source_kind() {
         .unwrap()
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     let vault = Vault::new(profile.0.join("vault"));
     vault
         .unlock(Zeroizing::new("a long test passphrase".into()))
@@ -999,4 +1001,236 @@ fn live_iptv_org_datasets_parse_select_and_official_playlists_import() {
         entries.len(),
         official
     );
+}
+#[test]
+fn artwork_is_sniffed_cached_and_served_only_through_the_image_policy() {
+    use iptv_core::logos;
+    assert_eq!(
+        logos::image_type(b"\x89PNG\r\n\x1a\n....", "text/plain"),
+        Some("image/png")
+    );
+    assert_eq!(
+        logos::image_type(b"\xff\xd8\xff\xe0rest", ""),
+        Some("image/jpeg")
+    );
+    assert_eq!(logos::image_type(b"GIF89a....", ""), Some("image/gif"));
+    assert_eq!(
+        logos::image_type(
+            b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+            "image/svg+xml"
+        ),
+        Some("image/svg+xml")
+    );
+    assert_eq!(
+        logos::image_type(b"<svg><script>alert(1)</script></svg>", "image/svg+xml"),
+        None
+    );
+    assert_eq!(
+        logos::image_type(b"<html><svg/></html>", "image/svg+xml"),
+        None
+    );
+    let profile = Profile::new();
+    let path = profile.0.join("logo");
+    logos::write_cached(&path, "image/png", b"\x89PNG\r\n\x1a\nbody").unwrap();
+    assert_eq!(
+        logos::read_cached(&path),
+        Some((b"\x89PNG\r\n\x1a\nbody".to_vec(), "image/png"))
+    );
+    std::fs::write(&path, b"text/html\n<html>").unwrap();
+    assert_eq!(logos::read_cached(&path), None);
+    // Image policy: any public host, the source's transport consents, never private addresses.
+    let own = source();
+    let policy = NetworkPolicy::images(&own);
+    assert!(
+        policy
+            .check_url(&Url::parse("https://images.invalid/logo.png").unwrap())
+            .is_ok()
+    );
+    assert!(
+        policy
+            .check_url(&Url::parse("http://images.invalid/logo.png").unwrap())
+            .is_err()
+    );
+    assert!(
+        policy
+            .check_url(&Url::parse("https://10.0.0.1/logo.png").unwrap())
+            .is_err()
+    );
+    assert!(!policy.accept_invalid_certs);
+    // The stored artwork URL is readable only for active channels, through the vault.
+    let db = Database::open(profile.0.join("catalogue.db")).unwrap();
+    let vault = Vault::new(profile.0.join("vault"));
+    vault
+        .unlock(Zeroizing::new("a long test passphrase".into()))
+        .unwrap();
+    let source_id = db.save_source(&own, &vault).unwrap();
+    let mut import = db.importer(&source_id, &vault).unwrap();
+    let mut with_logo = channel("https://provider.invalid/a");
+    with_logo.logo = "https://images.invalid/news.png".into();
+    import.channel(with_logo).unwrap();
+    let mut without = channel("https://provider.invalid/b");
+    without.name = "Plain".into();
+    without.tvg_id = "plain.id".into();
+    import.channel(without).unwrap();
+    import.activate().unwrap();
+    let page = db.channels(&query()).unwrap();
+    let news = page.items.iter().find(|c| c.name == "News").unwrap();
+    let plain = page.items.iter().find(|c| c.name == "Plain").unwrap();
+    assert!(news.has_logo && !plain.has_logo);
+    assert!(news.logo_url.is_none());
+    let (url, config) = db.channel_logo(&news.id, &vault).unwrap();
+    assert_eq!(url, "https://images.invalid/news.png");
+    assert_eq!(config.name, "Fixture");
+    assert!(matches!(
+        db.channel_logo(&plain.id, &vault),
+        Err(iptv_core::error::Error::NotFound)
+    ));
+}
+
+/// Live check: a public iptv-org stream plays through the loopback relay with the production
+/// client settings (default agent, cookies, HTTP/1.1, manifest rewriting). Run with `--ignored`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires network access to iptv-org.github.io and public stream hosts"]
+async fn live_relay_serves_a_public_iptv_org_stream() {
+    let candidates = tokio::task::spawn_blocking(|| {
+        let policy = NetworkPolicy::public(iptv_org::DEFAULT_PLAYLIST_BASE).unwrap();
+        let response = policy
+            .get_blocking(
+                &format!("{}/countries/de.m3u", iptv_org::DEFAULT_PLAYLIST_BASE),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        let mut streams = vec![];
+        m3u::parse_with(BufReader::new(response), true, |channel| {
+            if channel.stream.url.starts_with("https://") && streams.len() < 12 {
+                streams.push(channel.stream);
+            }
+            Ok(())
+        })
+        .unwrap();
+        streams
+    })
+    .await
+    .unwrap();
+    assert!(!candidates.is_empty());
+    let source = org_source(org_config(&["DE"], CountryMode::CoverageStrict));
+    let relay = iptv_core::relay::Relay::bind().await.unwrap();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut played = None;
+    for secret in candidates {
+        let host = Url::parse(&secret.url)
+            .unwrap()
+            .host_str()
+            .unwrap()
+            .to_owned();
+        let prepared = match relay.start(secret, &source).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                eprintln!("live: {host}: {error}");
+                continue;
+            }
+        };
+        let response = client.get(&prepared.url).send().await.unwrap();
+        if !response.status().is_success() {
+            eprintln!("live: {host}: relay answered {}", response.status());
+            continue;
+        }
+        let body = response.text().await.unwrap();
+        if prepared.kind == "hls" {
+            assert!(body.starts_with("#EXTM3U"));
+            let next = body
+                .lines()
+                .find(|line| !line.starts_with('#') && !line.trim().is_empty())
+                .map(str::to_owned);
+            if let Some(next) = next {
+                assert!(next.starts_with("http://127.0.0.1:"));
+                let segment = client.get(&next).send().await.unwrap();
+                if !segment.status().is_success() {
+                    eprintln!("live: {host}: segment answered {}", segment.status());
+                    continue;
+                }
+            }
+        }
+        played = Some((host, prepared.kind));
+        break;
+    }
+    let (host, kind) = played.expect("no public stream could be relayed");
+    eprintln!("live: relayed a {kind} stream from {host}");
+    relay.close(None);
+}
+
+/// Live check: an official iptv-org playlist imports inside a running `Core` and channel
+/// artwork is served through the relay's logo route. Run with `--ignored`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires network access to iptv-org.github.io and public image hosts"]
+async fn live_core_imports_an_official_playlist_and_serves_artwork() {
+    let profile = Profile::new();
+    let core = iptv_core::Core::open(profile.0.clone()).await.unwrap();
+    core.unlock("a long test passphrase".to_owned())
+        .await
+        .unwrap();
+    let mut config = org_config(&[], CountryMode::CoverageStrict);
+    config.method = Method::Playlist;
+    config.playlists = vec![OfficialPlaylist {
+        kind: PlaylistKind::Country,
+        code: "de".into(),
+    }];
+    let mut source = org_source(config);
+    source.allow_http = true;
+    let source_id = core.database.save_source(&source, &core.vault).unwrap();
+    let job = core.start_job(source_id).unwrap();
+    let started = std::time::Instant::now();
+    loop {
+        let status = core.job(&job).unwrap();
+        match status.state.as_str() {
+            "completed" => break,
+            "failed" | "cancelled" => panic!("import {}: {:?}", status.state, status.error),
+            _ => {}
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(180),
+            "import timed out"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let page = core.channels(&query()).unwrap();
+    assert!(page.total > 0);
+    let with_logo = page
+        .items
+        .iter()
+        .find(|c| c.logo_url.is_some())
+        .expect("official playlists carry tvg-logo");
+    let logo_url = with_logo.logo_url.clone().unwrap();
+    assert!(logo_url.starts_with("http://127.0.0.1:") && logo_url.contains("/logo/"));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client.get(&logo_url).send().await.unwrap();
+    assert_eq!(response.status(), 200, "logo route");
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(content_type.starts_with("image/"), "{content_type}");
+    assert_eq!(
+        response.headers().get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    let bytes = response.bytes().await.unwrap();
+    assert!(!bytes.is_empty());
+    // Second request is served from the private cache without a network round trip.
+    let again = core.logo(&with_logo.id).await.unwrap();
+    assert_eq!(again.0.len(), bytes.len());
+    assert!(std::fs::read_dir(profile.0.join("logos")).unwrap().count() >= 1);
+    // A wrong token or an unknown channel never leaks anything.
+    let wrong = logo_url.replace("/logo/", "/logo/x");
+    assert_ne!(client.get(&wrong).send().await.unwrap().status(), 200);
+    eprintln!(
+        "live: imported {} channels, artwork {} ({} bytes)",
+        page.total,
+        content_type,
+        bytes.len()
+    );
+    core.lock();
 }

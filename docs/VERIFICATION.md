@@ -52,6 +52,21 @@ The same environment re-ran every suite after adding iptv-org sources (official 
 
 Not executed for this change: a native build, an iptv-org import inside the running native application (vault, job, activation) and playback of iptv-org streams. The live test covers download, parsing, selection and serialization with the production network policy, not the SQLite activation path inside a Tauri process.
 
+## Playback network fixes and channel artwork (October 13, 2026)
+
+Playing iptv-org streams in the native application produced policy, network, cancellation and player errors, and channel logos were never shown. The stream clients now send a browser-like default User-Agent, speak HTTP/1.1, keep one cookie jar per playback session, probe with a plain GET instead of a Range request, follow up to ten re-checked redirects and may accept unverified certificates per source consent; official-playlist imports skip streams the source policy cannot fetch; closing a finished session no longer cancels the next one; playback errors are reported as stream errors; and artwork is served through a new relay route from a bounded private cache.
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed (reqwest gained the `cookies` feature; `Cargo.lock` updated) |
+| `cargo test --workspace --locked` | 22 passed, 3 ignored (new: artwork sniffing, cache format, image policy, `channel_logo` through the vault) |
+| `cargo test -p iptv-core --test core -- --ignored live_` | 3 live checks passed once: the dataset selection check as before; a real HLS stream from a public host relayed through the loopback relay (manifest rewritten, first segment fetched; one host answered 403 upstream); `countries/de.m3u` imported inside a running `Core` (288 channels) with a PNG logo served by the `/logo` route, then from the cache, and a wrong token rejected |
+| `npm run typecheck`, Biome on `src` and `tests`, `npm test` | Passed, 16 tests |
+| `python3 -m unittest discover -s tests/sql` | 12 passed (migration 003 applied) |
+| `node scripts/project.mjs verify`, `npm run build:web`, `npm run test:e2e` | Passed, 5 specifications |
+
+Not executed: launching the native application against these changes, artwork rendering inside the WebView under the updated CSP, Android, and playback of streams that need cookies or unverified certificates (covered by code and unit tests only).
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

@@ -13,6 +13,7 @@ function channel(index: number): Channel {
     favorite: index % 13 === 0,
     variants: 1,
     hasEpg: index % 7 !== 0,
+    logoUrl: null,
   };
 }
 function channels(query: ChannelQuery) {

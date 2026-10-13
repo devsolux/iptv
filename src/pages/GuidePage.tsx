@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
+import { ChannelArt } from '../components/ChannelArt';
 import { Empty, ErrorNotice, Loading } from '../components/Feedback';
 import { Filters } from '../components/Filters';
 import { focusNavigation, focusPageStart } from '../components/Shell';
@@ -310,7 +311,10 @@ export default function GuidePage() {
                   onClick={() => play(channel)}
                 >
                   <span className="channel-number">{String(row.index + 1).padStart(3, '0')}</span>
-                  <strong>{channel.name}</strong>
+                  <span className="guide-identity">
+                    <ChannelArt name={channel.name} logoUrl={channel.logoUrl} compact />
+                    <strong>{channel.name}</strong>
+                  </span>
                 </button>
                 <div className="programme-track">
                   {!spans.length && (

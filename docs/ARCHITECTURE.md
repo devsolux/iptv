@@ -49,10 +49,10 @@ Focus tracks logical row/item identity and position. Moving beyond mounted conte
 
 ## Playback and transport
 
-Rust resolves one active playback session, probes a bounded prefix to identify extensionless media, validates configured hosts and supplies opaque local resource URLs. The in-process relay rewrites HLS and DASH references, supports ranges and streams media with backpressure. Provider headers are applied at the network boundary, not leaked through frontend configuration. Session replacement/cancellation invalidates the previous session.
+Rust resolves one active playback session, probes a bounded prefix to identify extensionless media, validates configured hosts and supplies opaque local resource URLs. The in-process relay rewrites HLS and DASH references, supports ranges and streams media with backpressure. Provider headers are applied at the network boundary, not leaked through frontend configuration. Session replacement, locking and source removal invalidate the previous session; closing one finished session never cancels the next one being prepared. Channel artwork is served by the same relay from a bounded private cache (see [SECURITY](SECURITY.md)); the catalogue DTO carries only the loopback address.
 
 Android uses one native Media3 instance with a full-screen dialog and remote controls. Desktop lazily loads hls.js for HLS or dash.js for DASH; native HLS is preferred when supported. There is no stacked Video.js wrapper, ffprobe process or transcoder. Recovery is bounded; codec support is determined by the actual device.
 
 ## Explicitly deferred
 
-Conditional HTTP/ETag reuse, remote image downloading/cache, local-file picking, source editing, mapping-editor UI, recording, DRM, cloud sync and closed-app scheduling are not implemented. These are not hidden background services. The application retains authorized source data locally but is not a live-stream availability monitoring service.
+Conditional HTTP/ETag reuse, local-file picking, source editing, mapping-editor UI, recording, DRM, cloud sync and closed-app scheduling are not implemented. These are not hidden background services. The application retains authorized source data locally but is not a live-stream availability monitoring service.

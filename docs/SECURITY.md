@@ -20,9 +20,13 @@ HTTPS certificate verification remains enabled. Cleartext and private-network ac
 
 iptv-org sources are aggregators whose streams live on arbitrary public hosts, so the exact host allowlist does not apply to them; every other control does: HTTPS unless cleartext is consented per source, no user-info URLs, DNS pinning, loopback/private/link-local/metadata/transition-address rejection, redirect re-checks, limits and deadlines. Private-network access and CDN host lists are rejected for these sources, their playlist and API bases must be plain HTTPS origins, and the metadata fetch behind the source form is confined to the API host. Dataset JSON is streamed under byte and item limits, unknown fields are ignored, and a malformed snapshot is rejected instead of activated.
 
+Every upstream request carries a browser-like default User-Agent unless the playlist supplies its own, speaks HTTP/1.1, and a playback session keeps one cookie jar so tokens set by a playlist response reach its segments. Certificates are verified against the operating-system trust store through rustls' platform verifier. A source may explicitly opt into unverified certificates; treat that like cleartext consent, acceptable for public streams with broken certificates and never for credentials.
+
 Imports and relay reads use limits and deadlines. Cancellation is cooperative: a blocking system DNS call can only return when the operating system resolver finishes. Do not interpret cancellation as instantaneous forced interruption of every external system call.
 
 ## Local playback transport
+
+The relay also serves channel artwork at an unguessable `/logo/{token}/{channel}` path for the UI's image elements. Artwork is fetched through the image policy (any public host over the source's permitted transports, never private addresses), limited to 1 MiB, accepted only when its bytes sniff as PNG, JPEG, GIF, WebP, AVIF or script-free SVG, cached under the private profile directory and served with `nosniff` and a `default-src 'none'` policy. The upstream image URL never reaches the WebView.
 
 The relay listens only on loopback and uses unguessable session/resource IDs. It does not expose an arbitrary external-URL endpoint. Resource and concurrency counts are bounded, and session cancellation stops associated streams. It has no public service, authentication bypass or DRM circumvention role. Do not expose its port through a reverse proxy or bind it to a public interface.
 

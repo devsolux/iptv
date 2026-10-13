@@ -83,6 +83,7 @@ export default function SourcesPage() {
         cdnHosts: [],
         allowHttp: data.get('http') === 'on',
         allowLan: false,
+        acceptInvalidCerts: data.get('tls') === 'on',
         countryCode: '',
         iptvOrg: built.config,
       };
@@ -95,6 +96,7 @@ export default function SourcesPage() {
         cdnHosts: lines(String(data.get('cdn') ?? ''), /[\s,]+/).map((host) => host.toLowerCase()),
         allowHttp: data.get('http') === 'on',
         allowLan: data.get('lan') === 'on',
+        acceptInvalidCerts: data.get('tls') === 'on',
         countryCode: String(data.get('country') ?? '')
           .trim()
           .toUpperCase(),
@@ -389,11 +391,17 @@ export default function SourcesPage() {
               </label>
             </>
           )}
-          <label className="checkbox-label">
-            <input data-focus name="http" type="checkbox" disabled={saving || isPreview} />
+          <label className="checkbox-label" key={`http-${kind}`}>
+            <input
+              data-focus
+              name="http"
+              type="checkbox"
+              defaultChecked={kind === 'iptv-org'}
+              disabled={saving || isPreview}
+            />
             <span>
               {kind === 'iptv-org'
-                ? 'Include unencrypted HTTP streams (many iptv-org streams use plain HTTP)'
+                ? 'Include unencrypted HTTP streams (a large share of iptv-org streams use plain HTTP)'
                 : 'Allow unencrypted HTTP for this source'}
             </span>
           </label>
@@ -403,10 +411,14 @@ export default function SourcesPage() {
               <span>Allow private LAN addresses for this source</span>
             </label>
           )}
+          <label className="checkbox-label">
+            <input data-focus name="tls" type="checkbox" disabled={saving || isPreview} />
+            <span>Accept unverified TLS certificates for this source’s streams</span>
+          </label>
           <p className="field-help">
             {kind === 'iptv-org'
-              ? 'iptv-org streams live on many public hosts, so this source may reach any public address over HTTPS, and over HTTP only if enabled. Loopback, private, link-local and metadata addresses stay blocked.'
-              : 'Enable these only for providers and home-network devices you trust. Loopback, link-local and metadata addresses are always blocked.'}
+              ? 'iptv-org streams live on many public hosts, so this source may reach any public address over HTTPS, and over HTTP only if enabled. Public streams often use expired or self-signed certificates; accept them only if an altered stream would not matter to you. Loopback, private, link-local and metadata addresses stay blocked.'
+              : 'Enable these only for providers and home-network devices you trust. Unverified certificates are no safer than plain HTTP. Loopback, link-local and metadata addresses are always blocked.'}
           </p>
           <button
             type="submit"

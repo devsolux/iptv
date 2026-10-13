@@ -2,6 +2,7 @@ pub mod db;
 pub mod error;
 pub mod iptv_org;
 pub mod limits;
+pub mod logos;
 pub mod m3u;
 pub mod manifest;
 pub mod models;
@@ -13,7 +14,7 @@ pub mod xmltv;
 use db::Database;
 use error::{Error, Result};
 use limits::{LimitedRead, MAX_JSON_BYTES, MAX_M3U_BYTES, MAX_XML_BYTES};
-use models::{Job, SourceInput};
+use models::{ChannelPage, ChannelQuery, Job, SourceInput};
 use network::NetworkPolicy;
 use relay::Relay;
 use std::{
@@ -23,7 +24,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -52,6 +53,10 @@ pub struct Core {
     imports: Arc<Semaphore>,
     unlocks: Arc<Semaphore>,
     catalog: Mutex<Option<CatalogCache>>,
+    logo_dir: PathBuf,
+    logo_permits: Arc<Semaphore>,
+    logo_failures: Mutex<HashMap<String, Instant>>,
+    logo_writes: AtomicU64,
     _profile_lock: File,
 }
 impl Core {
@@ -67,6 +72,8 @@ impl Core {
         let profile_lock = options.open(directory.join("profile.lock"))?;
         profile_lock.try_lock().map_err(|_| Error::Busy)?;
         let database = Database::open(directory.join("catalogue.db"))?;
+        let logo_dir = directory.join("logos");
+        db::private_directory(&logo_dir)?;
         let core = Arc::new(Self {
             database,
             vault: Vault::new(directory.join("credentials.vault")),
@@ -77,8 +84,13 @@ impl Core {
             imports: Arc::new(Semaphore::new(1)),
             unlocks: Arc::new(Semaphore::new(1)),
             catalog: Mutex::new(None),
+            logo_dir,
+            logo_permits: Arc::new(Semaphore::new(4)),
+            logo_failures: Mutex::new(HashMap::new()),
+            logo_writes: AtomicU64::new(0),
             _profile_lock: profile_lock,
         });
+        core.relay.attach(&core);
         let weak = Arc::downgrade(&core);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
@@ -90,6 +102,77 @@ impl Core {
             }
         });
         Ok(core)
+    }
+    /// Catalogue page with artwork addresses pointing at the loopback relay.
+    pub fn channels(&self, query: &ChannelQuery) -> Result<ChannelPage> {
+        let mut page = self.database.channels(query)?;
+        for item in &mut page.items {
+            if item.has_logo {
+                item.logo_url = Some(self.relay.logo_url(&item.id));
+            }
+        }
+        Ok(page)
+    }
+    /// Artwork for one catalogued channel: served from the private disk cache, otherwise
+    /// fetched once through the image policy with bounded concurrency. Failures are
+    /// remembered for an hour so a dead image host is not retried on every scroll.
+    pub async fn logo(self: &Arc<Self>, channel: &str) -> Result<(Vec<u8>, &'static str)> {
+        self.require_unlocked()?;
+        if let Ok(failures) = self.logo_failures.lock()
+            && failures
+                .get(channel)
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(3600))
+        {
+            return Err(Error::NotFound);
+        }
+        let core = self.clone();
+        let id = channel.to_owned();
+        let (url, config) =
+            tokio::task::spawn_blocking(move || core.database.channel_logo(&id, &core.vault))
+                .await
+                .map_err(|_| Error::Storage)??;
+        let path = self
+            .logo_dir
+            .join(Uuid::new_v5(&Uuid::NAMESPACE_URL, url.as_bytes()).to_string());
+        let cached = path.clone();
+        if let Ok(Some(entry)) =
+            tokio::task::spawn_blocking(move || logos::read_cached(&cached)).await
+        {
+            return Ok(entry);
+        }
+        let _permit = self
+            .logo_permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| Error::Cancelled)?;
+        match logos::fetch(&url, &config).await {
+            Ok((data, content_type)) => {
+                let bytes = data.clone();
+                let directory = self.logo_dir.clone();
+                let prune = self
+                    .logo_writes
+                    .fetch_add(1, Ordering::Relaxed)
+                    .is_multiple_of(200);
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = logos::write_cached(&path, content_type, &bytes);
+                    if prune {
+                        logos::prune(&directory, 3000);
+                    }
+                })
+                .await;
+                Ok((data, content_type))
+            }
+            Err(error) => {
+                if let Ok(mut failures) = self.logo_failures.lock() {
+                    if failures.len() >= 4096 {
+                        failures.clear();
+                    }
+                    failures.insert(channel.to_owned(), Instant::now());
+                }
+                Err(error)
+            }
+        }
     }
     pub fn require_unlocked(&self) -> Result<()> {
         if self.vault.is_unlocked() {
@@ -359,6 +442,7 @@ impl Core {
         let base = iptv_org::playlist_base(config)?;
         let policy = NetworkPolicy::new(base.as_str(), config)?;
         let mut count = 0u64;
+        let mut skipped = 0u64;
         match org.method {
             iptv_org::Method::Playlist => {
                 for pick in &org.playlists {
@@ -370,6 +454,14 @@ impl Core {
                     let reader = decoded(response, MAX_M3U_BYTES, cancel.clone())?;
                     m3u::parse_with(reader, true, |mut channel| {
                         check_cancel(cancel)?;
+                        // Only streams this source's policy can fetch are catalogued, exactly
+                        // as the catalogue method does; HTTP needs the source's consent.
+                        if url::Url::parse(&channel.stream.url)
+                            .is_ok_and(|url| policy.check_url(&url).is_err())
+                        {
+                            skipped += 1;
+                            return Ok(());
+                        }
                         if channel.country.is_empty() {
                             channel.country = country
                                 .clone()
@@ -384,9 +476,11 @@ impl Core {
                     })?;
                 }
                 if count == 0 {
-                    return Err(Error::Invalid(
-                        "The selected iptv-org playlists contain no channels; the previous catalogue was preserved.",
-                    ));
+                    return Err(Error::Invalid(if skipped > 0 {
+                        "Every stream in the selected playlists uses an address this source does not allow; enable unencrypted HTTP for the source and refresh."
+                    } else {
+                        "The selected iptv-org playlists contain no channels; the previous catalogue was preserved."
+                    }));
                 }
             }
             iptv_org::Method::Catalogue => {
