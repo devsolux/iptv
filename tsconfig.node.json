@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "composite": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "tsBuildInfoFile": "./node_modules/.cache/node.tsbuildinfo"
+  },
+  "include": [
+    "vite.config.ts",
+    "playwright.config.ts"
+  ]
+}

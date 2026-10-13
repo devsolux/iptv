@@ -1,0 +1,103 @@
+{
+  "date": "2026-10-13",
+  "product": {
+    "name": "IPTV",
+    "version": "1.0.0",
+    "identifier": "com.devsolux.iptv"
+  },
+  "status": "Source delivery; native/build compatibility not verified",
+  "environment": {
+    "node": "22.16.0",
+    "npm": "10.9.2",
+    "python": "3.13.5",
+    "syntaxParserTypescript": "5.8.3",
+    "cargoAvailable": false,
+    "packageRegistryInstallationAvailable": false
+  },
+  "checks": [
+    {
+      "command": "npm test",
+      "result": "passed",
+      "tests": 10
+    },
+    {
+      "command": "python -m unittest discover -s tests/sql -v",
+      "result": "passed",
+      "tests": 11
+    },
+    {
+      "command": "python -m unittest discover -s tests/tools -v",
+      "result": "passed",
+      "tests": 7
+    },
+    {
+      "command": "TypeScript 5.8.3 createSourceFile syntax diagnostics",
+      "result": "passed",
+      "files": 33,
+      "limitation": "Not dependency-aware semantic checking or the declared TS7 compiler"
+    },
+    {
+      "command": "node --check scripts/*.mjs (each script individually)",
+      "result": "passed",
+      "files": 3
+    },
+    {
+      "command": "node scripts/project.mjs verify",
+      "result": "passed"
+    },
+    {
+      "command": "make help; make -n check build build-android clean clean-web clean-rust clean-android",
+      "result": "passed",
+      "limitation": "Recipe expansion only; no native build executed"
+    }
+  ],
+  "configurationParsing": {
+    "json": {
+      "files": 7,
+      "result": "passed"
+    },
+    "toml": {
+      "files": 5,
+      "result": "passed"
+    },
+    "xml_svg": {
+      "files": 258,
+      "result": "passed"
+    },
+    "macos_plist": "passed structural parsing, not runtime ATS verification"
+  },
+  "negativeGates": {
+    "missingLocks": "Correctly rejected in isolated tests",
+    "unsafeCleanupSymlink": "Correctly rejected; external data preserved",
+    "customAndroidNetworkPolicy": "Preserved; overwrite rejected",
+    "missingCargoDuringBootstrap": "Rejected before manifest changes"
+  },
+  "notRun": [
+    "npm dependency installation",
+    "dependency-aware TypeScript 7 typecheck",
+    "Biome",
+    "Rustfmt",
+    "Clippy",
+    "11 written Rust tests",
+    "3 written Playwright specifications",
+    "native desktop builds",
+    "Android generation/Gradle/build",
+    "physical Fire TV tests",
+    "live playback",
+    "performance benchmarks",
+    "signing",
+    "dependency vulnerability/license audit"
+  ],
+  "unresolved": [
+    "@types/react exact version",
+    "@types/react-dom exact version",
+    "package-lock.json",
+    "src-tauri/Cargo.lock",
+    "full graph/API compatibility",
+    "old Fire OS WebView compatibility"
+  ],
+  "originalArchiveHashes": {
+    "iptv.zip": "3a5f54c7f49e158f1db571da198f6e68dd774f492594d362beb20a20d99cbf99",
+    "iptv-playlist-master.zip": "f9a0786fef60d7533d85a1839eff3f2efd4dbebff8ad7b449f758750ab9c3c28"
+  }
+}

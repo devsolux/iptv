@@ -1,0 +1,7 @@
+IPTV asset provenance
+
+Application icon: user-supplied iptv.zip, assets/icon.png; resized for native bundles.
+Country flags: user-supplied iptv.zip, public/assets/flags; 257 two-letter SVG files copied unchanged.
+TV banner: the supplied icon composited on a solid application background.
+No downloaded fonts, stock artwork or channel logos are bundled.
+Original asset rights were not established by the supplied archives. Confirm redistribution rights before a public release.
