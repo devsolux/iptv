@@ -3,7 +3,7 @@ import { z } from 'zod';
 const id = z.string().uuid();
 export const statusSchema = z.object({
   name: z.literal('IPTV'),
-  version: z.literal('1.0.0'),
+  version: z.literal('1.1.0'),
   identifier: z.literal('com.devsolux.iptv'),
   nativePlayer: z.boolean(),
 });

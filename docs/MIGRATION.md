@@ -16,7 +16,7 @@ No old generated country catalogue, tokens, GitHub publication configuration, bu
 
 ## Identity and migration effects
 
-Product name is `IPTV`, release version is `1.0.0`, and the application identifier is `com.devsolux.iptv`. The npm/Cargo package name remains lowercase `iptv` where ecosystem conventions require it. The previous identifier `net.devsolux.iptv` is not retained as an alias.
+Product name is `IPTV`, release version is `1.1.0` (first released as `1.0.0`), and the application identifier is `com.devsolux.iptv`. The npm/Cargo package name remains lowercase `iptv` where ecosystem conventions require it. The previous identifier `net.devsolux.iptv` is not retained as an alias.
 
 Changing the identifier means a different installed application/data location on relevant platforms. This source does not read or copy old credential stores and does not overwrite an existing application database. Re-add authorized sources to the new vault. Stable IDs are maintained for subsequent refreshes within this application's own source identity model.
 

@@ -22,10 +22,10 @@ Source URLs, headers and stream secrets are sealed with XChaCha20-Poly1305 under
 [Releases](https://github.com/devsolux/iptv/releases) carry Linux, Windows, macOS and Android packages, a `SHA256SUMS` manifest and a keyless Sigstore bundle for every file. No operating-system vendor has signed them, so verify a download before you trust it (Cosign 3):
 
 ```sh
-cosign verify-blob --bundle IPTV-1.0.0-macos-universal.dmg.sigstore.json \
+cosign verify-blob --bundle IPTV-1.1.0-macos-universal.dmg.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/devsolux/iptv/\.github/workflows/releases\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  IPTV-1.0.0-macos-universal.dmg
+  IPTV-1.1.0-macos-universal.dmg
 ```
 
 - **macOS (universal: Apple silicon and Intel, macOS 13.3 or newer).** The app is ad-hoc signed and **not notarized**, so Gatekeeper reports "IPTV is damaged and can't be opened" or blocks it as coming from an unidentified developer. Open the `.dmg`, drag **IPTV** to Applications, then clear the quarantine attributes once in Terminal; you **must** do this before the first launch and again after every update:

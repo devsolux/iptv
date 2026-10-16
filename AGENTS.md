@@ -5,7 +5,7 @@ Guidance for AI coding agents (and people) changing this repository. Read it bef
 
 ## Project
 
-IPTV `1.0.0` (`com.devsolux.iptv`) is an Ionic React + Tauri 2 application for user-supplied M3U
+IPTV `1.1.0` (`com.devsolux.iptv`) is an Ionic React + Tauri 2 application for user-supplied M3U
 playlists, iptv-org selections and XMLTV guides, built for desktop and Android/Fire TV remotes. **Rust owns** ingestion,
 persistence, secrets, network policy and playback authorization. **The UI owns** presentation,
 routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives loopback relay URLs.
@@ -22,9 +22,11 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
 
 ## Fixed identity: do not change
 
-- Version is `1.0.0` everywhere: `package.json`, `src-tauri/tauri.conf.json`, the three `Cargo.toml`
-  files, `AppStatus` in `src-tauri/src/lib.rs`, `statusSchema` in `src/lib/contracts.ts` and
-  `src/lib/preview.ts`. `scripts/project.mjs verify` and `.github/workflows/releases.yml` enforce it.
+- Version is `1.1.0` everywhere: `package.json` and the two root entries of `package-lock.json`,
+  `src-tauri/tauri.conf.json`, the three `Cargo.toml` files and their `Cargo.lock` entries, `AppStatus`
+  in `src-tauri/src/lib.rs`, `statusSchema` in `src/lib/contracts.ts`, `src/lib/preview.ts` and the
+  bootstrap User-Agent. `scripts/project.mjs verify` and the identity check of
+  `.github/workflows/releases.yml` hard-code it, so a version change updates them in the same commit.
 - Product `IPTV`, identifier `com.devsolux.iptv`, package name `iptv`. Tauri stays on major 2.
 - Do not bump versions, rename the identity or create release tags unless asked.
 

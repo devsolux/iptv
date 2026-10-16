@@ -6,7 +6,7 @@ import { root, run } from './project.mjs';
 const stable = /^\d+\.\d+\.\d+$/;
 async function download(url, json = true) {
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'IPTV-build-bootstrap/1.0.0' },
+    headers: { 'User-Agent': 'IPTV-build-bootstrap/1.1.0' },
     signal: AbortSignal.timeout(30000),
   });
   if (!response.ok)

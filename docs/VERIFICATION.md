@@ -177,6 +177,20 @@ Changes: every action stays pinned to the commit of its latest release, checked 
 
 Not executed: a run of `releases.yml` with setup-java v6.1.0 (the verify `android` job already uses that pin).
 
+## Version 1.1.0 (October 16, 2026)
+
+The version moves from `1.0.0` to `1.1.0` in every pinned place (`package.json` and the root entries of `package-lock.json`, `tauri.conf.json`, the three `Cargo.toml` files and their `Cargo.lock` entries, `AppStatus`, `statusSchema`, the preview status, the bootstrap User-Agent) and in both gates that hard-code it: `scripts/project.mjs verify` and the identity check of `releases.yml`, which accepts only the tags `1.1.0` or `v1.1.0`. Tauri derives the Android `versionCode` (1001000) from it. Release `v1.1.0` contains the streaming fixes, the workflow changes and the documentation since `v1.0.0`.
+
+| Check | Result |
+| --- | --- |
+| `cargo metadata --locked --offline` | Passed: `Cargo.lock` matches the bumped manifests |
+| `make verify-release` | Passed |
+| `make check` | Passed: 21 unit tests, 31 Rust tests |
+| `make test-sql test-tools` | Passed |
+| `make test-e2e` | 7 browser specifications passed |
+
+The packaging, signing and asset upload of `v1.1.0` run in the release workflow on GitHub; their result is shown on the release page and in the workflow run, not here.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

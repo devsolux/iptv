@@ -80,11 +80,11 @@ export function verifyLocks() {
 export function verifySource() {
   const pkg = json('package.json');
   const config = json('src-tauri/tauri.conf.json');
-  if (pkg.name !== 'iptv' || pkg.version !== '1.0.0' || !pkg.private)
+  if (pkg.name !== 'iptv' || pkg.version !== '1.1.0' || !pkg.private)
     fail('Unexpected npm project identity.');
   if (
     config.productName !== 'IPTV' ||
-    config.version !== '1.0.0' ||
+    config.version !== '1.1.0' ||
     config.identifier !== 'com.devsolux.iptv'
   )
     fail('Unexpected native application identity.');
@@ -93,7 +93,7 @@ export function verifySource() {
     'src-tauri/crates/iptv-core/Cargo.toml',
     'src-tauri/plugins/player/Cargo.toml',
   ])
-    if (!read(file).includes('version = "1.0.0"')) fail(`Version mismatch in ${file}`);
+    if (!read(file).includes('version = "1.1.0"')) fail(`Version mismatch in ${file}`);
   const forbidden =
     /capacitor|cordova|redux|workbox|vite-plugin-pwa|react-router-dom|@ionic\/react-router|video\.js/;
   for (const name of Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }))

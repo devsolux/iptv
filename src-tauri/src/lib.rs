@@ -42,7 +42,7 @@ async fn worker<T: Send + 'static>(
 fn app_status() -> AppStatus {
     AppStatus {
         name: "IPTV",
-        version: "1.0.0",
+        version: "1.1.0",
         identifier: "com.devsolux.iptv",
         native_player: cfg!(target_os = "android"),
     }

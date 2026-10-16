@@ -89,7 +89,7 @@ jobs:
           pkg = json.loads((root / 'package.json').read_text())
           app = json.loads((root / 'src-tauri/tauri.conf.json').read_text())
           if (pkg['name'], pkg['version'], app['productName'], app['version'], app['identifier']) != (
-              'iptv', '1.0.0', 'IPTV', '1.0.0', 'com.devsolux.iptv'
+              'iptv', '1.1.0', 'IPTV', '1.1.0', 'com.devsolux.iptv'
           ):
               raise SystemExit('Unexpected IPTV identity or version; update release metadata deliberately.')
           commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
@@ -108,7 +108,7 @@ jobs:
                   release = json.load(response)
               tag = release['tag_name']
               if tag not in (pkg['version'], f"v{pkg['version']}") or os.environ['GITHUB_REF'] != f'refs/tags/{tag}':
-                  raise SystemExit('Release tag must match package.json: 1.0.0 or v1.0.0.')
+                  raise SystemExit('Release tag must match package.json: 1.1.0 or v1.1.0.')
               if release['draft'] or release.get('immutable', False):
                   raise SystemExit('Cannot append assets to a draft/immutable published release. Use workflow_dispatch for build artifacts.')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
