@@ -6,6 +6,7 @@ import android.app.Dialog
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -112,8 +113,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 }
                 spec
             }
+            // Live MPEG-TS arrives at real-time rate, so the start threshold is the only headroom
+            // against network jitter; half a second stalled constantly on Wi-Fi remotes.
             val load = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(3000, 15000, 500, 1000)
+                .setBufferDurationsMs(3000, 15000, 1500, 3000)
                 .setTargetBufferBytes(12 * 1024 * 1024)
                 .setPrioritizeTimeOverSizeThresholds(false)
                 .build()
@@ -137,29 +140,71 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             }
             var retries = 0
-            exo.addListener(object : Player.Listener {
-                override fun onPlayerError(error: PlaybackException) {
-                    // Never render provider URLs or native exception messages.
-                    val panel = LinearLayout(activity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(48, 48, 48, 48)
-                        setBackgroundColor(Color.BLACK)
-                    }
-                    panel.addView(TextView(activity).apply {
-                        text = "Playback stopped: ${error.errorCodeName}"
-                        setTextColor(Color.WHITE)
-                        textSize = 20f
-                    })
-                    val retry = Button(activity).apply {
-                        text = if (retries < 2) "Retry" else "Close player"
-                        setOnClickListener {
-                            if (retries >= 2) finishPlayback()
-                            else { retries++; frame.removeView(panel); exo.prepare(); exo.play(); view.requestFocus() }
+            var played = false
+            var reconnects = 0
+            var lastReconnect = 0L
+            fun live() = exo.isCurrentMediaItemLive || exo.duration == C.TIME_UNSET
+            // A live stream that played and then dropped or ended is rejoined at its live edge,
+            // at most three times in two minutes.
+            fun reconnect(): Boolean {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastReconnect > 120_000) reconnects = 0
+                if (!played || reconnects >= 3) return false
+                reconnects++
+                lastReconnect = now
+                exo.seekToDefaultPosition()
+                exo.prepare()
+                exo.play()
+                return true
+            }
+            fun showProblem(message: String) {
+                // Never render provider URLs or native exception messages.
+                val panel = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(48, 48, 48, 48)
+                    setBackgroundColor(Color.BLACK)
+                }
+                panel.addView(TextView(activity).apply {
+                    text = message
+                    setTextColor(Color.WHITE)
+                    textSize = 20f
+                })
+                val retry = Button(activity).apply {
+                    text = if (retries < 2) "Retry" else "Close player"
+                    setOnClickListener {
+                        if (retries >= 2) finishPlayback()
+                        else {
+                            retries++
+                            frame.removeView(panel)
+                            if (live()) exo.seekToDefaultPosition()
+                            exo.prepare()
+                            exo.play()
+                            view.requestFocus()
                         }
                     }
-                    panel.addView(retry)
-                    frame.addView(panel)
-                    retry.requestFocus()
+                }
+                panel.addView(retry)
+                frame.addView(panel)
+                retry.requestFocus()
+            }
+            exo.addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying) played = true
+                }
+                override fun onPlaybackStateChanged(state: Int) {
+                    if (state == Player.STATE_ENDED && live() && !reconnect()) {
+                        showProblem("The live stream ended.")
+                    }
+                }
+                override fun onPlayerError(error: PlaybackException) {
+                    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                        // The live window moved past the playhead after a stall: rejoin the edge.
+                        exo.seekToDefaultPosition()
+                        exo.prepare()
+                        return
+                    }
+                    if (error.errorCode / 1000 == 2 && reconnect()) return
+                    showProblem("${describe(error)}\n(${error.errorCodeName})")
                 }
             })
             val window = Dialog(activity, android.R.style.Theme_Material_NoActionBar_Fullscreen).apply {
@@ -200,6 +245,16 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             finishPlayback()
             call?.reject("Native player initialization failed")
         }
+    }
+
+    /** Media3 groups error codes by thousands: IO, parsing, decoding, audio track, DRM. */
+    private fun describe(error: PlaybackException): String = when (error.errorCode / 1000) {
+        2 -> "The stream connection was lost or refused."
+        3 -> "This stream format is not supported by this device."
+        4 -> "This device cannot decode this stream."
+        5 -> "This device cannot play this stream's audio."
+        6 -> "This stream is protected (DRM) and cannot be played here."
+        else -> "Playback stopped unexpectedly."
     }
 
     @Command

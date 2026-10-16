@@ -134,6 +134,34 @@ Reproducing the Android job on this machine (Tauri CLI 2.12.2 host, AGP 9.3.1, G
 
 Not executed: the armv7 build, AAB packaging, APK signing, the GitHub Actions re-run of the release workflow and installation on a device.
 
+## Streaming gaps (October 16, 2026)
+
+An audit of the playback path (relay, manifest rewriting, network clients, desktop engines and the Android plugin) found these defects; each is fixed and, where a local test can reach it, covered:
+
+| Defect | Effect | Fix |
+| --- | --- | --- |
+| The relay removed DASH `UTCTiming`; dash.js then tried its default clock server, which the CSP blocks, and the manifest `Date` header was not exposed through CORS | dash.js reported `TIME_SYNC_FAILED` (16) and the player stopped **every live DASH stream** with "cannot decode" | HTTP clock sources are relayed under the source policy, `direct` sources kept; upstream `Date` is forwarded and exposed; dash.js errors are mapped by code and clock, subtitle and buffer-pruning errors are not fatal |
+| Relay error responses carried no CORS headers | The WebView saw every refusal as status 0, so the 403 (policy) and 415 (format) messages were unreachable | CORS headers on every media response, errors included, for the application's origins only (Rust test) |
+| Resources expired 300 s after registration whenever another playlist was registered, under a hard cap of 8,192 with an O(n) prune per registration | On-demand HLS segments answered 410 after five minutes once a level, audio or subtitle playlist loaded; long DVR windows hit 413; large playlists rewrote in quadratic time | Resources live with their session under a 16,384 least-recently-used bound (Rust test) |
+| The probe response was discarded and the player opened a second upstream connection | Slower start (second handshake); single-connection providers and one-time addresses refused the player | The probe response is parked for 20 s and serves the player's first plain request for the root |
+| MPEG-TS was recognised only at offset 0; `video/mp2t` and `.ts` were ignored; `.m3u8` addresses were always parsed as playlists | Live TS starting mid-packet went through the failing `<video>` path first; a `.m3u8` address serving TS failed | `detect_kind` (playlist text, TS sync at any packet offset, FLV, content type, address) used by the probe and every relay response (Rust test) |
+| One policy-rejected variant or rendition failed a whole HLS multivariant playlist; `$` in an HLS address was parsed as a DASH template | Streams with a plain-HTTP or off-host alternative failed; such addresses answered 415 | Rejected variants, renditions and hints are dropped, the playlist fails only when no variant remains; placeholders are parsed only in `SegmentTemplate` (Rust tests) |
+| `METHOD=SAMPLE-AES` with the identity key format was rejected; key checks matched substrings | Clear sample-encrypted streams answered 415 | Attribute-exact key checks: AES-128 and identity SAMPLE-AES relayed, other key formats and `SAMPLE-AES-CTR` rejected (Rust test) |
+| URL fragments in stream or redirect addresses failed the address policy | Such streams were reported as policy blocks | Fragments are dropped before the check |
+| The HTTP client cache held its lock across DNS resolution | One slow lookup stalled every request of the session | Resolution happens outside the lock |
+| Desktop player: a network failure after playback started was final, a live stream whose connection ended froze on its last frame, and the "Press Play" prompt stayed in the loading overlay | Live channels stopped on transient outages | Bounded reconnection through a fresh relay session (three per two minutes), `ended` handling, `capLevelToPlayerSize` (unit tests for the error mapping and budget) |
+| Android Media3: falling behind the live window showed an error panel, a dropped live stream stayed ended, errors showed only the code name, playback started after 0.5 s of buffer | Stalled live channels required manual retries; frequent rebuffering | Rejoin the live edge on `ERROR_CODE_BEHIND_LIVE_WINDOW`, bounded reconnection on IO errors and live end, readable messages, 1.5 s / 3 s start thresholds |
+
+| Check | Result |
+| --- | --- |
+| `make check` (verify-source, typecheck, Biome, unit tests, rustfmt, clippy `-D warnings`, cargo test) | Passed: 21 unit tests, 31 Rust tests (2 relay unit tests, 29 integration) |
+| `make test-sql test-tools` | Passed |
+| `make test-e2e` | 7 browser specifications passed |
+| `./gradlew --offline :tauri-plugin-iptv-player:compileReleaseKotlin` (JDK 21, generated Android host) | Passed; the changed plugin compiled against Media3 |
+| `live_relay_audit_of_public_streams` (three runs) and `live_relay_serves_a_public_iptv_org_stream` | 30 of 36 streams relay with root, ranged and HEAD requests answering 200, as before; the same 6 hosts are offline or refuse; one run saw a single transient HEAD 502 from a redirecting host that answered 200 in the other two. The live check relayed an HLS stream; its first candidate answered 403 because every variant of that playlist is plain HTTP on another host, which the policy correctly rejects |
+
+Not executed: the native desktop application, a live DASH stream in the WebView, playback on an Android or Fire TV device and the full Android APK build.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

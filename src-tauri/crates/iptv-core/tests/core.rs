@@ -314,7 +314,7 @@ fn dash_rewrites_relative_templates_and_rejects_drm() {
     let base = Url::parse("https://provider.invalid/live/manifest.mpd").unwrap();
     let clear = r#"<MPD><Period><AdaptationSet><SegmentTemplate media="chunk-$Number$.m4s" initialization="init.mp4"/><Representation id="v" bandwidth="1000"/></AdaptationSet></Period></MPD>"#;
     let mut resources = vec![];
-    let result = manifest::dash(clear, &base, |url| {
+    let result = manifest::dash(clear, &base, |url, _| {
         resources.push(url.to_owned());
         Ok(format!(
             "http://127.0.0.1:123/media/token/{}",
@@ -325,10 +325,180 @@ fn dash_rewrites_relative_templates_and_rejects_drm() {
     assert!(resources.iter().any(|url| url.contains("$Number$")));
     assert!(result.contains("http://127.0.0.1"));
     assert!(
-        manifest::dash("<MPD><ContentProtection/></MPD>", &base, |url| Ok(
+        manifest::dash("<MPD><ContentProtection/></MPD>", &base, |url, _| Ok(
             url.to_owned()
         ))
         .is_err()
+    );
+}
+/// Registers like the relay: addresses outside the provider's HTTPS host are rejected.
+fn provider_only(resources: &mut Vec<String>, url: &str) -> iptv_core::error::Result<String> {
+    if !url.starts_with("https://provider.invalid/") {
+        return Err(iptv_core::error::Error::Policy);
+    }
+    resources.push(url.to_owned());
+    Ok(format!("http://127.0.0.1:123/media/s/{}", resources.len()))
+}
+#[test]
+fn hls_drops_rejected_variants_and_renditions_but_keeps_the_rest() {
+    let base = Url::parse("https://provider.invalid/live/master.m3u8").unwrap();
+    let master = "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"Other\",URI=\"http://mirror.invalid/a.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"Main\",URI=\"audio.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO=\"a\"\nhttp://mirror.invalid/low.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000000,AUDIO=\"a\"\n\nhigh.m3u8\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=1,URI=\"http://mirror.invalid/i.m3u8\"\n";
+    let mut resources = vec![];
+    let output = manifest::hls(master, &base, |url| provider_only(&mut resources, url)).unwrap();
+    assert_eq!(resources.len(), 2, "{resources:?}");
+    assert!(resources[0].ends_with("/live/audio.m3u8"));
+    assert!(resources[1].ends_with("/live/high.m3u8"));
+    assert!(!output.contains("mirror.invalid"));
+    assert_eq!(output.matches("#EXT-X-STREAM-INF").count(), 1);
+    assert!(!output.contains("BANDWIDTH=900000"));
+    assert!(!output.contains("I-FRAME"));
+    // The surviving variant keeps its URI on the line right after its tag (blank lines aside).
+    let lines: Vec<&str> = output.lines().filter(|l| !l.is_empty()).collect();
+    let info = lines
+        .iter()
+        .position(|l| l.starts_with("#EXT-X-STREAM-INF"))
+        .unwrap();
+    assert!(lines[info + 1].starts_with("http://127.0.0.1:123/"));
+
+    let rejected = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttp://mirror.invalid/low.m3u8\n";
+    assert!(matches!(
+        manifest::hls(rejected, &base, |url| provider_only(&mut vec![], url)),
+        Err(iptv_core::error::Error::Policy)
+    ));
+    // Media playlists cannot skip segments: a rejected segment fails the playlist.
+    let media = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nhttp://mirror.invalid/1.ts\n";
+    assert!(manifest::hls(media, &base, |url| provider_only(&mut vec![], url)).is_err());
+}
+#[test]
+fn hls_relays_identity_keys_and_rejects_drm_key_systems() {
+    let base = Url::parse("https://provider.invalid/live/list.m3u8").unwrap();
+    let playlist = |key: &str| format!("#EXTM3U\n{key}\n#EXTINF:4,\nsegment.ts\n");
+    for key in [
+        "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"",
+        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key.bin\",KEYFORMAT=\"identity\"",
+        "#EXT-X-KEY:METHOD=NONE",
+    ] {
+        assert!(
+            manifest::hls(&playlist(key), &base, |url| Ok(url.to_owned())).is_ok(),
+            "{key}"
+        );
+    }
+    for key in [
+        "#EXT-X-KEY:METHOD=SAMPLE-AES-CTR,URI=\"skd://key\"",
+        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://key\",KEYFORMAT=\"com.apple.streamingkeydelivery\"",
+        "#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI=\"data:x\",KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\"",
+    ] {
+        assert!(
+            matches!(
+                manifest::hls(&playlist(key), &base, |url| Ok(url.to_owned())),
+                Err(iptv_core::error::Error::Unsupported)
+            ),
+            "{key}"
+        );
+    }
+}
+#[test]
+fn dash_keeps_usable_clock_sources_and_marks_only_templates() {
+    let base = Url::parse("https://provider.invalid/live/manifest.mpd").unwrap();
+    let mpd = r#"<MPD type="dynamic"><UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-xsdate:2014" value="https://provider.invalid/time"/><UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-iso:2014" value="https://time.invalid/?iso"/><UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="2026-10-16T10:00:00Z"/><UTCTiming schemeIdUri="urn:mpeg:dash:utc:ntp:2014" value="pool.ntp.org"/><Period><AdaptationSet><SegmentTemplate media="chunk-$Number$.m4s" initialization="init.mp4"/><Representation id="v" bandwidth="1"><SegmentList><SegmentURL media="part$1.m4s"/></SegmentList></Representation></AdaptationSet></Period></MPD>"#;
+    let mut calls = vec![];
+    let output = manifest::dash(mpd, &base, |url, template| {
+        if !url.starts_with("https://provider.invalid/") {
+            return Err(iptv_core::error::Error::Policy);
+        }
+        calls.push((url.to_owned(), template));
+        Ok(format!("http://127.0.0.1:123/media/s/{}", calls.len()))
+    })
+    .unwrap();
+    assert!(calls.contains(&("https://provider.invalid/time".to_owned(), false)));
+    assert!(calls.contains(&(
+        "https://provider.invalid/live/chunk-$Number$.m4s".to_owned(),
+        true
+    )));
+    assert!(calls.contains(&("https://provider.invalid/live/init.mp4".to_owned(), true)));
+    assert!(calls.contains(&("https://provider.invalid/live/part$1.m4s".to_owned(), false)));
+    assert_eq!(output.matches("<UTCTiming").count(), 2, "{output}");
+    assert!(output.contains("utc:direct:2014"));
+    assert!(!output.contains("time.invalid") && !output.contains("ntp"));
+}
+#[test]
+fn relay_detects_containers_from_content_before_names() {
+    use iptv_core::relay::detect_kind;
+    let mut ts = vec![0u8; 100];
+    for _ in 0..8 {
+        ts.push(0x47);
+        ts.extend_from_slice(&[0u8; 187]);
+    }
+    assert_eq!(
+        detect_kind(&ts, "", &["/live/1234"]),
+        "mpegts",
+        "unaligned start"
+    );
+    assert_eq!(
+        detect_kind(&ts, "application/vnd.apple.mpegurl", &["/x.m3u8"]),
+        "mpegts"
+    );
+    assert_eq!(detect_kind(b"FLV\x01\x05", "", &["/live"]), "flv");
+    assert_eq!(
+        detect_kind(b"\xef\xbb\xbf#EXTM3U\n", "video/mp2t", &["/a.ts"]),
+        "hls"
+    );
+    assert_eq!(detect_kind(b"<?xml?><MPD>", "", &["/a"]), "dash");
+    assert_eq!(detect_kind(b"", "application/x-mpegURL", &["/a"]), "hls");
+    assert_eq!(
+        detect_kind(b"\x1f\x8b", "", &["/a", "/b/index.M3U8"]),
+        "hls"
+    );
+    assert_eq!(detect_kind(b"", "application/dash+xml", &["/a"]), "dash");
+    assert_eq!(detect_kind(b"\x00\x01", "video/MP2T", &["/a"]), "mpegts");
+    assert_eq!(
+        detect_kind(b"\x00\x01", "", &["/live/channel.ts"]),
+        "mpegts"
+    );
+    assert_eq!(
+        detect_kind(b"\x00\x00\x00\x18ftypmp42", "video/mp4", &["/v.mp4"]),
+        "progressive"
+    );
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relay_errors_carry_cors_headers_for_the_webview_only() {
+    let relay = iptv_core::relay::Relay::bind().await.unwrap();
+    let base = relay.logo_url("x");
+    let base = base.split("/logo/").next().unwrap();
+    let missing = format!("{base}/media/{}/{}", Uuid::new_v4(), Uuid::new_v4());
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client
+        .get(&missing)
+        .header("origin", "http://tauri.localhost")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 410);
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "http://tauri.localhost"
+    );
+    assert!(
+        response.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap()
+            .contains("date")
+    );
+    let foreign = client
+        .get(&missing)
+        .header("origin", "https://example.invalid")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), 403);
+    assert!(
+        foreign
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none()
     );
 }
 #[test]

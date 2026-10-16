@@ -183,9 +183,11 @@ export default function PlayerPage() {
                 label={
                   player.session?.native
                     ? 'Playing in the native player…'
-                    : player.phase === 'opening'
-                      ? 'Opening a secure playback session…'
-                      : 'Buffering…'
+                    : player.message
+                      ? player.message
+                      : player.phase === 'opening'
+                        ? 'Opening a secure playback session…'
+                        : 'Buffering…'
                 }
               />
             </div>

@@ -1,6 +1,17 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../lib/bridge';
 import type { Playback } from '../lib/contracts';
+import {
+  CODEC,
+  dashErrorCode,
+  dashFailure,
+  FORMAT,
+  LOST,
+  mediaFailure,
+  permanentRelayFailure,
+  ReconnectBudget,
+  relayFailure,
+} from '../lib/playback';
 
 export interface Track {
   index: number;
@@ -46,23 +57,7 @@ const initial: PlayerState = {
   selectedAudio: 0,
   selectedSubtitle: -1,
 };
-const CODEC =
-  'This device cannot decode this stream (unsupported codec or container). Try another stream variant or channel.';
-const FORMAT =
-  'This stream format is not supported by this device’s player. Try another stream variant or channel.';
-const LOST = 'The stream connection was lost or refused. Retry, or try another stream variant.';
-function mediaErrorMessage(error: MediaError | null): string {
-  switch (error?.code) {
-    case 2:
-      return LOST;
-    case 3:
-      return CODEC;
-    case 4:
-      return FORMAT;
-    default:
-      return 'Playback stopped unexpectedly. Retry, or try another stream variant.';
-  }
-}
+const RECONNECTING = 'Reconnecting to the stream…';
 function positionOf(element: HTMLVideoElement): Position {
   const last = element.seekable.length - 1;
   return {
@@ -84,6 +79,13 @@ export function usePlayer(
   const trackControls = useRef<TrackControls | null>(null);
   const onEnd = useRef(onNativeEnd);
   onEnd.current = onNativeEnd;
+  const reconnects = useRef(new ReconnectBudget());
+  /** Set while a dropped stream is reopened, so the new attempt says why it is loading. */
+  const reconnecting = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new channel or variant starts a fresh reconnection budget.
+  useEffect(() => {
+    reconnects.current.reset();
+  }, [channelId, variant]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger that reopens the session.
   useEffect(() => {
     const element = video.current;
@@ -96,11 +98,22 @@ export function usePlayer(
     let mediaRecoveries = 0;
     let triedMpegts = false;
     let lastTick = 0;
+    let live = false;
     /** Message to prefer when the native fallback fails after an engine already diagnosed it. */
     let pendingMessage: string | null = null;
-    setState({ ...initial, muted: element.muted, volume: element.volume });
+    setState({
+      ...initial,
+      muted: element.muted,
+      volume: element.volume,
+      message: reconnecting.current ? RECONNECTING : '',
+    });
+    reconnecting.current = false;
     const patch = (change: Partial<PlayerState>) => {
       if (!disposed) setState((current) => ({ ...current, ...change }));
+    };
+    const markLive = (value: boolean) => {
+      live = value;
+      patch({ live: value });
     };
     const fail = (message: string) => {
       if (disposed || failed) return;
@@ -111,6 +124,24 @@ export function usePlayer(
       element.pause();
       patch({ phase: 'error', message, startFailed: !everPlayed });
       if (session) void api.closePlayback(session.sessionId).catch(() => undefined);
+    };
+    /**
+     * A stream that already played and then dropped is reopened through a fresh relay session
+     * (new probe, new engine) within a bounded budget; anything else fails with `message`.
+     */
+    const reconnect = (message: string) => {
+      if (disposed || failed) return;
+      if (!everPlayed || !reconnects.current.take(Date.now())) {
+        fail(message);
+        return;
+      }
+      failed = true;
+      const release = releaseEngine;
+      releaseEngine = () => undefined;
+      release();
+      reconnecting.current = true;
+      patch({ phase: 'buffering', message: RECONNECTING });
+      setAttempt((value) => value + 1);
     };
     const autoplay = () => {
       void element.play().catch((error: unknown) => {
@@ -157,10 +188,16 @@ export function usePlayer(
         }
         trackControls.current = null;
       };
-      player.on(mpegts.Events.ERROR, (kind: string) =>
-        fail(kind === mpegts.ErrorTypes.NETWORK_ERROR ? LOST : CODEC),
-      );
-      player.on(mpegts.Events.MEDIA_INFO, () => patch({ live: true }));
+      player.on(mpegts.Events.ERROR, (kind: string, _detail: string, info?: { code?: number }) => {
+        if (kind !== mpegts.ErrorTypes.NETWORK_ERROR) {
+          fail(CODEC);
+          return;
+        }
+        const code = info?.code ?? 0;
+        if (permanentRelayFailure(code)) fail(relayFailure(code));
+        else reconnect(LOST);
+      });
+      markLive(true);
       player.attachMediaElement(element);
       player.load();
       autoplay();
@@ -169,11 +206,24 @@ export function usePlayer(
       setState((current) =>
         disposed || current.phase === 'error' || current.phase === 'playing'
           ? current
-          : { ...current, phase: 'buffering' },
+          : {
+              ...current,
+              phase: 'buffering',
+              // The play prompt is answered; the loading overlay must not keep showing it.
+              message: current.phase === 'gesture' ? '' : current.message,
+            },
       );
     const playing = () => {
       everPlayed = true;
       patch({ phase: 'playing', message: '', position: positionOf(element) });
+    };
+    /** A live stream only ends when its connection does; reopen it. */
+    const ended = () => {
+      if (live) reconnect(LOST);
+      else
+        setState((current) =>
+          disposed || current.phase === 'error' ? current : { ...current, phase: 'paused' },
+        );
     };
     const paused = () => {
       if (!element.ended)
@@ -205,15 +255,17 @@ export function usePlayer(
         void startMpegts('mpegts', session.url);
         return;
       }
-      fail(mediaErrorMessage(error));
+      if (error?.code === 2) reconnect(LOST);
+      else fail(mediaFailure(error?.code));
     };
     const duration = () => {
       if (element.duration === Infinity || session?.kind === 'progressive')
-        patch({ live: element.duration === Infinity });
+        markLive(element.duration === Infinity);
       patch({ position: positionOf(element) });
     };
     element.addEventListener('play', played);
     element.addEventListener('playing', playing);
+    element.addEventListener('ended', ended);
     element.addEventListener('pause', paused);
     element.addEventListener('waiting', waiting);
     element.addEventListener('volumechange', volume);
@@ -260,6 +312,9 @@ export function usePlayer(
             const hls = new Hls({
               enableWorker: true,
               lowLatencyMode: false,
+              // TV screens gain nothing from variants above their size and Lite-class
+              // devices cannot decode them smoothly.
+              capLevelToPlayerSize: true,
               maxBufferLength: 12,
               maxMaxBufferLength: 20,
               maxBufferSize: 16 * 1024 * 1024,
@@ -274,7 +329,7 @@ export function usePlayer(
               trackControls.current = null;
             };
             hls.on(Hls.Events.MANIFEST_PARSED, autoplay);
-            hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => patch({ live: data.details.live }));
+            hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => markLive(data.details.live));
             hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () =>
               patch({
                 audio: hls.audioTracks.map((track, index) => ({
@@ -295,15 +350,9 @@ export function usePlayer(
               if (!data.fatal || disposed) return;
               const detail = String(data.details);
               if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                // The relay answers 415 for manifests it cannot rewrite (DRM, variables) and 403
-                // for addresses the source policy rejects; anything else is the upstream host.
                 const code = data.response?.code ?? 0;
-                if (code === 415) fail(FORMAT);
-                else if (code === 403)
-                  fail(
-                    'A stream address was blocked by this source’s network policy. Check the source’s HTTP and certificate settings.',
-                  );
-                else fail(LOST);
+                if (permanentRelayFailure(code)) fail(relayFailure(code));
+                else reconnect(LOST);
                 return;
               }
               const codecProblem = /codec|parsing/i.test(detail);
@@ -353,8 +402,8 @@ export function usePlayer(
             },
           });
           player.on(dash.MediaPlayer.events.STREAM_INITIALIZED, () => {
+            markLive(Boolean(player.isDynamic()));
             patch({
-              live: Boolean(player.isDynamic()),
               audio: player
                 .getTracksFor('audio')
                 .map((track, index) => ({ index, label: track.lang || `Audio ${index + 1}` })),
@@ -364,7 +413,12 @@ export function usePlayer(
             });
             autoplay();
           });
-          player.on(dash.MediaPlayer.events.ERROR, () => fail(CODEC));
+          player.on(dash.MediaPlayer.events.ERROR, (event: unknown) => {
+            // Clock synchronisation and subtitle failures arrive here too and are not fatal.
+            const message = dashFailure(dashErrorCode(event));
+            if (message === LOST) reconnect(LOST);
+            else if (message) fail(message);
+          });
           trackControls.current = {
             audio: (index) => {
               const track = player.getTracksFor('audio')[index];
@@ -401,6 +455,7 @@ export function usePlayer(
       document.removeEventListener('visibilitychange', visibility);
       element.removeEventListener('play', played);
       element.removeEventListener('playing', playing);
+      element.removeEventListener('ended', ended);
       element.removeEventListener('pause', paused);
       element.removeEventListener('waiting', waiting);
       element.removeEventListener('volumechange', volume);

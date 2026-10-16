@@ -276,7 +276,10 @@ fn redirect(url: &Url, headers: &HeaderMap) -> Result<Url> {
         .ok_or(Error::Network)?
         .to_str()
         .map_err(|_| Error::Network)?;
-    url.join(location).map_err(|_| Error::Policy)
+    let mut next = url.join(location).map_err(|_| Error::Policy)?;
+    // Fragments never reach the server and would otherwise fail the address policy.
+    next.set_fragment(None);
+    Ok(next)
 }
 
 type ClientCache = HashMap<String, (std::time::Instant, reqwest::Client)>;
@@ -303,12 +306,15 @@ impl MediaNetwork {
     async fn client(&self, url: &Url) -> Result<reqwest::Client> {
         self.policy.check_url(url)?;
         let key = url.origin().ascii_serialization();
-        let mut cache = self.clients.lock().await;
-        if let Some((created, client)) = cache.get(&key)
-            && created.elapsed() < Duration::from_secs(60)
         {
-            return Ok(client.clone());
+            let cache = self.clients.lock().await;
+            if let Some((created, client)) = cache.get(&key)
+                && created.elapsed() < Duration::from_secs(60)
+            {
+                return Ok(client.clone());
+            }
         }
+        // Resolved without the cache lock: one slow lookup must not stall segments of other hosts.
         let addresses = self.policy.resolve(url).await?;
         // HTTP/1.1 only: stream hosts are routinely fragile over negotiated HTTP/2.
         let client = reqwest::Client::builder()
@@ -324,6 +330,7 @@ impl MediaNetwork {
             .resolve_to_addrs(url.host_str().ok_or(Error::Policy)?, &addresses)
             .build()
             .map_err(|_| Error::Network)?;
+        let mut cache = self.clients.lock().await;
         if cache.len() >= 32 {
             cache.clear();
         }

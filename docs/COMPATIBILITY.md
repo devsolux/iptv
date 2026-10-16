@@ -38,7 +38,7 @@ Native Media3 uses the platform decoders; it does not guarantee every codec/prof
 
 ## Implemented playback scope
 
-HLS, clear DASH and supported progressive HTTP(S) streams are the intended formats. HLS AES-128 resources can be relayed; DRM/key systems other than the supported identity case are rejected. RTMP, SRT and MMSH are unsupported. DASH rewriting chooses the first BaseURL and does not support external xlink, patches or DRM. Native HLS audio/subtitle presentation depends on platform behavior. Desktop variant selection is implemented; the native full-screen TV dialog does not include an equivalent variant picker.
+HLS, clear DASH and supported progressive HTTP(S) streams are the intended formats. HLS AES-128 and identity SAMPLE-AES resources can be relayed; DRM key systems (any `KEYFORMAT` other than `identity`, `SAMPLE-AES-CTR`) are rejected. RTMP, SRT and MMSH are unsupported. DASH rewriting chooses the first BaseURL and does not support external xlink, patches or DRM; HTTP `UTCTiming` sources are relayed when the source policy allows their host, `direct` sources are kept and other schemes are dropped, in which case dash.js uses the manifest's `Date` header. Native HLS audio/subtitle presentation depends on platform behavior. Desktop variant selection is implemented; the native full-screen TV dialog does not include an equivalent variant picker.
 
 There is no guarantee that a URL that responds successfully is playable. Network, unsupported-protocol and decode failures must be checked against authorized deterministic test streams as well as representative providers.
 
