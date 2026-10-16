@@ -1,10 +1,12 @@
 # Verification of every push and pull request against the committed dependency graph.
-# Actions are pinned to the commit of their latest stable release (checked 2026-10-13) and
-# runner images are pinned so system packages (WebKitGTK, indicators) stay known.
+# Actions are pinned to the commit of their latest stable release (checked 2026-10-16) and
+# runner images are pinned so system packages (WebKitGTK, indicators) stay known. Only this
+# workflow restores the npm download cache; releases.yml installs without caches.
 name: Verify IPTV
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -42,6 +44,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
+          cache: npm
       # Missing locks are an intentional hard failure, not an automatic upgrade.
       - run: node scripts/project.mjs locks
       - run: npm ci
@@ -74,6 +77,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
+          cache: npm
       - run: node scripts/project.mjs locks
       - run: npm ci
       - if: runner.os == 'Linux'
@@ -94,3 +98,84 @@ jobs:
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked
       - run: npm run tauri -- build --no-bundle -- --locked
+  android:
+    # The Media3 player plugin and the Android Rust build are otherwise compiled only when a
+    # release is packaged; a debug APK catches Kotlin, Gradle and NDK breakage on every push.
+    name: Android debug build (aarch64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install Temurin JDK 21 (the LTS accepted by the generated AGP/Gradle host)
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: node scripts/project.mjs locks
+      - run: npm ci
+      - name: Install the toolchain pinned by rust-toolchain.toml and the Android target
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      # The next two steps mirror the android job of releases.yml; change them together.
+      - name: Install the latest stable Android NDK and build tools
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?The GitHub-hosted Ubuntu runner must provide the Android SDK}"
+          manager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$manager" --licenses < <(yes) > /dev/null
+          "$manager" --channel=0 'platform-tools'
+          "$manager" --list --channel=0 > "$RUNNER_TEMP/sdk-packages.txt"
+          python - <<'PY'
+          import os, pathlib, re, subprocess
+          sdk = pathlib.Path(os.environ['ANDROID_HOME'])
+          listing = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'sdk-packages.txt').read_text()
+          versions = lambda prefix: sorted(set(re.findall(r'^\s*' + prefix + r';(\d+\.\d+\.\d+)\s*\|', listing, re.M)), key=lambda x: tuple(map(int, x.split('.'))))
+          ndks, tools = versions('ndk'), versions('build-tools')
+          if not ndks or not tools:
+              raise SystemExit('Unable to resolve stable Android NDK and build-tools packages.')
+          manager = str(sdk / 'cmdline-tools/latest/bin/sdkmanager')
+          subprocess.run([manager, '--channel=0', f'ndk;{ndks[-1]}', f'build-tools;{tools[-1]}'], check=True)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'NDK_HOME={sdk / "ndk" / ndks[-1]}\n')
+              env.write(f'ANDROID_NDK_HOME={sdk / "ndk" / ndks[-1]}\n')
+          PY
+      - name: Generate the Android host and install the SDK platforms it declares
+        run: |
+          set -euo pipefail
+          npm run tauri -- android init --ci
+          node scripts/android-configure.mjs
+          node scripts/android-configure.mjs --check
+          python - <<'PY'
+          import os, pathlib, re, subprocess
+          files = [pathlib.Path('src-tauri/gen/android/app/build.gradle.kts'), pathlib.Path('src-tauri/plugins/player/android/build.gradle.kts')]
+          levels = set()
+          for path in files:
+              matches = re.findall(r'\bcompileSdk\s*=\s*(\d+)', path.read_text())
+              if len(matches) != 1:
+                  raise SystemExit(f'Review the changed compileSdk declaration in {path}.')
+              levels.add(int(matches[0]))
+          listing = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'sdk-packages.txt').read_text()
+          available = set(re.findall(r'^\s*(platforms;android-\d+(?:\.\d+)?)\s*\|', listing, re.M))
+          packages = []
+          for level in sorted(levels):
+              # From API 37 stable platforms are published as android-37.0.
+              found = [name for name in (f'platforms;android-{level}', f'platforms;android-{level}.0') if name in available]
+              if not found:
+                  raise SystemExit(f'No stable SDK platform publishes API level {level}: {sorted(available)}')
+              packages.append(found[0])
+          manager = pathlib.Path(os.environ['ANDROID_HOME']) / 'cmdline-tools/latest/bin/sdkmanager'
+          subprocess.run([str(manager), '--channel=0', *packages], check=True)
+          PY
+      - name: Build a debug APK (Rust core, Tauri host and the Media3 player plugin)
+        run: npm run tauri -- android build --ci --debug --target aarch64 --apk -- --locked

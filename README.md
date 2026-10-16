@@ -4,7 +4,7 @@
 
 A unified Ionic React / Tauri 2 application for live TV: bring your own M3U playlists and XMLTV guides, or build a library from the public [iptv-org](https://github.com/iptv-org/iptv) datasets. Catalogue processing, persistence, credentials, network policy, artwork and playback authorization belong to Rust; the UI owns presentation and remote interaction. Desktop and Android/Fire TV share one code base.
 
-> **Delivery status:** verified source, not a certified release. The dependency graph is committed and pinned; type checking, linting, the Rust, frontend, SQL, tooling and browser suites, an unbundled macOS desktop build and three live network checks pass. Android packaging, signing, other desktop platforms, Fire OS devices and native playback of every stream type have not been verified. Read [verification](docs/VERIFICATION.md) and [compatibility](docs/COMPATIBILITY.md) before release.
+> **Delivery status:** verified source, not a certified release. The dependency graph is committed and pinned; type checking, linting, the Rust, frontend, SQL, tooling and browser suites, native builds on Linux, macOS and Windows and the live relay checks pass, and the release workflow builds and Sigstore-signs Linux, Windows, macOS and Android packages. Operating-system signing (Apple notarization, Windows Authenticode, Android release keys), installation on Fire OS devices and native playback of every stream type have not been verified. Read [verification](docs/VERIFICATION.md) and [compatibility](docs/COMPATIBILITY.md) before release.
 
 ## What it does
 
@@ -16,6 +16,28 @@ A unified Ionic React / Tauri 2 application for live TV: bring your own M3U play
 ## Security in one paragraph
 
 Source URLs, headers and stream secrets are sealed with XChaCha20-Poly1305 under a random per-profile key that Rust creates on first start and keeps in a private file beside the data; there is no passphrase and nothing to unlock. Every upstream request passes the Rust network policy: HTTPS unless the source consents to HTTP, DNS pinning, loopback, private, link-local and metadata address blocks, re-checked redirects, and an exact host allowlist for own playlists (public hosts only for aggregator sources). Unverified certificates are an explicit per-source consent, treated like cleartext. The WebView receives loopback URLs only and no shell, filesystem, SQL or HTTP plugin authority. Details are in [SECURITY.md](docs/SECURITY.md).
+
+## Installing a release
+
+[Releases](https://github.com/devsolux/iptv/releases) carry Linux, Windows, macOS and Android packages, a `SHA256SUMS` manifest and a keyless Sigstore bundle for every file. No operating-system vendor has signed them, so verify a download before you trust it (Cosign 3):
+
+```sh
+cosign verify-blob --bundle IPTV-1.0.0-macos-universal.dmg.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/devsolux/iptv/\.github/workflows/releases\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  IPTV-1.0.0-macos-universal.dmg
+```
+
+- **macOS (universal: Apple silicon and Intel, macOS 13.3 or newer).** The app is ad-hoc signed and **not notarized**, so Gatekeeper reports "IPTV is damaged and can't be opened" or blocks it as coming from an unidentified developer. Open the `.dmg`, drag **IPTV** to Applications, then clear the quarantine attributes once in Terminal; you **must** do this before the first launch and again after every update:
+
+  ```sh
+  xattr -cr /Applications/IPTV.app
+  ```
+
+  Using the `.app.tar.gz` instead, run `xattr -cr` on the extracted `IPTV.app`. Prefix the command with `sudo` if macOS reports a permission error. Only do this for a download you verified: it removes the protection macOS applies to files from the internet.
+- **Windows.** The installers carry no Authenticode signature; SmartScreen asks for confirmation (**More info → Run anyway**).
+- **Linux.** Make the AppImage executable (`chmod +x`), or install the `.deb` or `.rpm`.
+- **Android and Fire TV.** Packages named `unsigned` cannot be installed; they are produced when the repository has no Android signing secrets (see [building](docs/BUILDING.md)).
 
 ## First build
 
@@ -47,7 +69,7 @@ The application opens straight into the library. On the Sources page choose **Ow
 | `scripts/`, `Makefile` | Explicit dependency/bootstrap, platform configuration and safe build/cleanup tasks |
 | `tests/` | Frontend unit tests, SQL invariants, Rust integration tests (including ignored live network checks) and browser specifications |
 | `docs/` | Architecture, security, building, compatibility, migration and verification status |
-| `.github/workflows/` | `verify.yml` on every push and pull request; `releases.yml` for signed packages on dispatch or a published release |
+| `.github/workflows/` | `verify.yml` on every push and pull request, including a debug Android build; `releases.yml` for signed packages on dispatch or a published release |
 
 ## Common commands
 
@@ -74,7 +96,7 @@ No command deploys, publishes, creates signing keys or erases application user d
 
 ## Continuous integration
 
-`verify.yml` runs on every push and pull request: source policy, SQL and tooling suites; typecheck, Biome, unit tests, the web build and browser specifications; and fmt, clippy, tests plus an unbundled Tauri build on pinned Ubuntu 24.04, macOS 15 and Windows 2025 runners. `releases.yml` runs on `workflow_dispatch` or a published release: it validates identity and pins, re-runs the checks, builds Linux, Windows, macOS universal and Android packages from the committed lockfiles, signs them with keyless Sigstore and attaches them to the release. Actions are pinned to the commit of their latest release; nothing in CI resolves or upgrades dependencies.
+`verify.yml` runs on every push and pull request (and on demand): source policy, SQL and tooling suites; typecheck, Biome, unit tests, the web build and browser specifications; fmt, clippy, tests plus an unbundled Tauri build on pinned Ubuntu 24.04, macOS 15 and Windows 2025 runners; and a debug Android build (aarch64) that compiles the Media3 player plugin. `releases.yml` runs on `workflow_dispatch` or a published release: it validates identity and pins, re-runs the checks, builds Linux, Windows, macOS universal and Android packages from the committed lockfiles, signs them with keyless Sigstore and attaches them to the release. Actions are pinned to the commit of their latest release; nothing in CI resolves or upgrades dependencies.
 
 ## Important compatibility boundary
 

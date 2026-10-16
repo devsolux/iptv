@@ -162,6 +162,19 @@ An audit of the playback path (relay, manifest rewriting, network clients, deskt
 
 Not executed: the native desktop application, a live DASH stream in the WebView, playback on an Android or Fire TV device and the full Android APK build.
 
+## Workflow update (October 16, 2026)
+
+Release run 38444833311 (tag `v1.0.0`, commit `750808b`) completed every job and attached eleven packages (Linux AppImage/deb/rpm, Windows NSIS/MSI, macOS universal `.dmg` and `.app.tar.gz`, unsigned Android APK/AAB for armv7 and aarch64), `SHA256SUMS` and a Sigstore bundle per file to the release. Those packages predate the streaming fixes; commits after `750808b` have no release packages until the workflow runs again (`workflow_dispatch` produces Actions artifacts only). Annotations on the latest verify and release runs contain only GitHub's macOS capacity notice.
+
+Changes: every action stays pinned to the commit of its latest release, checked on October 16, 2026 through the GitHub API: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0, `actions/upload-artifact` v7.0.2, `actions/download-artifact` v8.0.2, `Swatinem/rust-cache` v2.9.2 and `sigstore/cosign-installer` v4.1.2 were current; `actions/setup-java` moved from v6.0.1 to v6.1.0 (no interface change for Temurin 21); Cosign's latest release is v3.1.3, inside the workflow's v3 gate. `verify.yml` gains `workflow_dispatch`, the npm download cache for jobs that run `npm ci` (the release workflow stays cache-free) and an `android` job that builds a debug aarch64 APK, so the Media3 plugin is compiled on every push instead of only at release time. The README documents installing releases, including the mandatory `xattr -cr /Applications/IPTV.app` step for the ad-hoc-signed macOS app; `docs/BUILDING.md` names the four Android signing secrets.
+
+| Check | Result |
+| --- | --- |
+| Ruby YAML parse of both workflows | Passed |
+| `node scripts/project.mjs verify`, Biome, `python3 -m unittest discover -s tests/tools` | Passed |
+
+Not executed before pushing: a GitHub Actions run of the new `android` job and of `releases.yml` with setup-java v6.1.0.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:
@@ -176,12 +189,12 @@ Running the real toolchain for the first time exposed defects that are now fixed
 
 ## Not executed / not established
 
-The armv7 Android build, AAB packaging and APK signing (host generation, Gradle/Media3 compilation and the aarch64 APK ran once on this machine, see above); macOS signing and notarization; a green GitHub Actions run of the release workflow for this revision (run 38437449018 built the Linux and Windows packages and the macOS `.dmg` before its collect step failed); real streaming, decoder and hardware-acceleration behavior; Fire OS 6/7/8 devices, 60 fps, memory, thermal and long-session behavior; dependency license review.
+Installation-signed Android packages (no signing secrets are configured, so the release carries `unsigned` APK/AAB files) and installing them on a device; macOS Developer ID signing and notarization (the `.dmg` is ad-hoc signed and needs `xattr -cr`); Windows Authenticode; release packages for commits after `750808b`; real streaming, decoder and hardware-acceleration behavior; Fire OS 6/7/8 devices, 60 fps, memory, thermal and long-session behavior; dependency license review.
 
 ## Open items
 
 - Resolved on October 13, 2026: `public/flags` is excluded in `biome.json` and the configuration was migrated to `rules.preset`, so `npm run lint` and `make check` pass; the `web` job of the verification workflow, which had failed on exactly this step since the first push, is green again. `verify.yml` now pins runner images (Ubuntu 24.04, macOS 15, Windows 2025, ahead of the announced `ubuntu-latest` move to Ubuntu 26), caches Cargo builds and keeps Playwright traces of failed specifications. `releases.yml` builds from the committed lockfiles instead of re-resolving dependencies with `make bootstrap` in CI, no longer depends on the uncommitted `docs/dependencies-resolved.json`, uses Temurin JDK 21 for the Android host and signs eleven platform packages.
-- Release run 38437449018 (`v1.0.0`) failed on the macOS `lipo` check and the Android `platforms;android-37` install; fixed on October 13, 2026 (see "Release workflow repair"). Re-run the workflow for the published release or through `workflow_dispatch`.
+- Release run 38437449018 (`v1.0.0`) failed on the macOS `lipo` check and the Android `platforms;android-37` install; fixed on October 13, 2026 (see "Release workflow repair"). Resolved: release run 38444833311 for `v1.0.0` completed green the same day (see "Workflow update").
 
 ## Release acceptance checklist
 
