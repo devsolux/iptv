@@ -12,9 +12,9 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
 
 | Path | Responsibility |
 | --- | --- |
-| `src/` | React UI: `pages/`, `components/`, `hooks/` (focus, paging, player with hls.js / dash.js / mpegts.js engines), `lib/` (bridge, contracts, pager), `store/` (Zustand UI state) |
+| `src/` | React UI: `pages/`, `components/`, `hooks/` (focus, paging, player with hls.js / dash.js / mpegts.js engines), `lib/` (bridge, contracts, pager, `playback.ts` failure messages and reconnection budget, iptv-org forms, preview data), `store/` (Zustand UI state) |
 | `src-tauri/src/lib.rs` | Tauri commands, app state, lifecycle |
-| `src-tauri/crates/iptv-core/` | M3U/XMLTV parsers, SQLite generations (`db.rs`), sealed key store (`vault.rs`), network policy, HLS/DASH relay, iptv-org integration (`iptv_org.rs`) |
+| `src-tauri/crates/iptv-core/` | M3U/XMLTV parsers, SQLite generations (`db.rs`), sealed key store (`vault.rs`), network policy (`network.rs`), loopback relay (`relay.rs`) and HLS/DASH rewriting (`manifest.rs`), artwork cache (`logos.rs`), iptv-org integration (`iptv_org.rs`) |
 | `src-tauri/plugins/player/` | Android Media3 player plugin (Kotlin) |
 | `scripts/` | `project.mjs` (verify/clean/doctor), `bootstrap.mjs` (dependency upgrades), `android-configure.mjs` |
 | `tests/` | `unit/` (Node), `e2e/` (Playwright), `sql/` and `tools/` (Python `unittest`) |
@@ -26,7 +26,20 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
   files, `AppStatus` in `src-tauri/src/lib.rs`, `statusSchema` in `src/lib/contracts.ts` and
   `src/lib/preview.ts`. `scripts/project.mjs verify` and `.github/workflows/releases.yml` enforce it.
 - Product `IPTV`, identifier `com.devsolux.iptv`, package name `iptv`. Tauri stays on major 2.
-- Work on `main`. Do not bump versions, rename the identity or create release tags unless asked.
+- Do not bump versions, rename the identity or create release tags unless asked.
+
+## Branch policy: `main` only
+
+- `main` is the only branch, locally and on `origin`. Work, commit and push directly on `main`.
+- Do not create feature branches, worktrees, forks or pull requests, and do not push any other
+  branch. If a tool or session starts on another branch or worktree, move the change to `main`
+  instead of opening a PR.
+- Commit only when asked; push only when asked, with `git push origin main`. Never force-push,
+  rewrite published history or delete `origin/main`.
+- Before pushing, `git fetch origin main`; if `origin/main` moved, update with `make github-pull`
+  (fast-forward only) and stop on divergence rather than merging or rebasing on your own.
+- Stage files by name. `make github-push` stages everything with `git add -A` and a timestamp
+  message; it is for the owner, not for agents.
 
 ## Commands
 
@@ -39,6 +52,7 @@ make test-sql test-tools   # SQLite invariants and build-tool safety (Python 3)
 make test-e2e     # Playwright; run `npx playwright install chromium` once
 make fmt          # Biome --write + cargo fmt
 make verify-release        # exact pins + lockfile gate (metadata only, not a certification)
+make android-init build-android   # generated Android host and APK (needs the Android SDK, JDK 21)
 ```
 
 Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before committing run
@@ -107,7 +121,27 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
     The relay never forwards `Range` or HEAD upstream for playlist resources (`playlist_like`,
     `manifest_prefix` in `relay.rs`); `live_relay_audit_of_public_streams` is the audit to re-run
     after touching `dispatch`.
-18. **WebView floor.** Keep the frontend within Chromium 84: no `:has()`, `inset`, `backdrop-filter`
+18. **Relay sessions.** The probe and every relay response classify streams with the single
+    `detect_kind` rule (playlist text, MPEG-TS sync at any packet offset, FLV, content type, address).
+    The probe's open response is parked (`Parked`, 20 s) for the player's first plain GET of the
+    root; never reintroduce a second upstream connection for it. Registered resources live for the
+    session under `MAX_RESOURCES` with least-recently-used eviction, never a time-to-live: on-demand
+    playlists are fetched once. Every media response, errors included, goes through `finish` so the
+    WebView gets CORS headers and can read 403/413/415. Only `SegmentTemplate` addresses carry
+    `$Identifier$` placeholders (`register(.., template)`).
+19. **Manifests.** In a multivariant HLS playlist, `manifest::hls` drops only optional entries
+    (variants, renditions, hints, session data) the policy rejects and fails when no variant
+    remains; media playlists never skip segments. Keys pass only for `METHOD` NONE, AES-128 or
+    SAMPLE-AES with the `identity` key format. DASH `UTCTiming` HTTP sources are relayed under the
+    source policy and the upstream `Date` header stays forwarded and CORS-exposed: without a clock
+    source dash.js stops every live DASH stream.
+20. **Player recovery.** Failure messages and engine error mapping live in `src/lib/playback.ts`
+    (dependency-free, unit tested). dash.js clock, subtitle and pruning errors (16, 33, 21) are not
+    fatal. A stream that never played fails so `PlayerPage` can try the next variant; one that
+    played and dropped reconnects through a fresh relay session within `ReconnectBudget` (three
+    per two minutes). The Android plugin rejoins the live edge on `ERROR_CODE_BEHIND_LIVE_WINDOW`
+    and reconnects within the same bound.
+21. **WebView floor.** Keep the frontend within Chromium 84: no `:has()`, `inset`, `backdrop-filter`
     or `Array.prototype.at` in own code, and keep `build.target` in `vite.config.ts` at
     `chrome84`/`safari14`. See `docs/COMPATIBILITY.md` before using a newer platform feature.
 
@@ -117,10 +151,17 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
   extensions and keep cross-file imports type-only or dependency-free.
 - Rust integration tests live in `src-tauri/crates/iptv-core/tests/core.rs`, including the iptv-org
   selection matrix (origin versus coverage, regions, subdivisions, cities, blocklist, labels,
-  aliases, deduplication) and the serializer round trip through the M3U parser and database.
+  aliases, deduplication), the serializer round trip through the M3U parser and database, manifest
+  rewriting and relay CORS. Private relay internals (registry eviction, placeholders) are tested
+  in the `#[cfg(test)]` module of `relay.rs`.
+- The network policy blocks loopback, so the relay cannot be tested against a local upstream.
+  Live checks are `#[ignore]`d: `cargo test -p iptv-core --test core -- --ignored --nocapture
+  live_relay` (run from `src-tauri/`; macOS has no `timeout` command, so do not wrap it).
 - E2E specs run against the `dev:web` preview, not the native app.
-- The Android plugin (`src-tauri/plugins/player/android`) only compiles through `make android-init`
-  and `make build-android`; no local check covers it, so change it conservatively.
+- The Android plugin (`src-tauri/plugins/player/android`) is not covered by `make check`; change it
+  conservatively. After `make android-init`, compile it alone with JDK 21:
+  `cd src-tauri/gen/android && ANDROID_HOME=~/Library/Android/sdk ./gradlew --offline
+  :tauri-plugin-iptv-player:compileReleaseKotlin`. Device playback still needs `make build-android`.
 - Record what actually ran in `docs/VERIFICATION.md`. Never claim device, signing or playback results
   that were not executed, and never fabricate lockfiles.
 
