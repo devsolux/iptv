@@ -172,8 +172,10 @@ Changes: every action stays pinned to the commit of its latest release, checked 
 | --- | --- |
 | Ruby YAML parse of both workflows | Passed |
 | `node scripts/project.mjs verify`, Biome, `python3 -m unittest discover -s tests/tools` | Passed |
+| Verify run 38907639373 (commit `af17b9d`, the streaming fixes and agent guides) | Passed: source, frontend and native checks on Ubuntu 24.04, macOS 15 and Windows 2025 |
+| Verify run 38916981621 (commit `1bc9a83`, this change) | Passed all six jobs: source policy (under 1 min), frontend and browser tests (3 min), native checks on Ubuntu 24.04 (3 min), macOS 15 (3 min) and Windows 2025 (10 min), and the new Android debug build (aarch64, 6 min) |
 
-Not executed before pushing: a GitHub Actions run of the new `android` job and of `releases.yml` with setup-java v6.1.0.
+Not executed: a run of `releases.yml` with setup-java v6.1.0 (the verify `android` job already uses that pin).
 
 ## Defects found by this verification
 
