@@ -4,7 +4,7 @@ NODE ?= node
 CARGO ?= cargo
 PYTHON ?= python3
 TAURI_MANIFEST := src-tauri/Cargo.toml
-.PHONY: help doctor bootstrap install dev dev-web dev-android android-init build build-web build-android build-macos-universal fmt lint typecheck check test test-rust test-sql test-tools test-e2e clean clean-web clean-rust clean-android verify-source verify-release
+.PHONY: help doctor bootstrap install dev dev-web dev-android android-init icons build build-web build-android build-macos-universal fmt lint typecheck check test test-rust test-sql test-tools test-e2e clean clean-web clean-rust clean-android verify-source verify-release
 
 help:
 	@$(NODE) scripts/project.mjs help
@@ -24,6 +24,8 @@ dev-android:
 	$(NPM) run dev:android
 android-init:
 	$(NPM) run android:init
+icons:
+	$(NPM) run icons
 build:
 	$(NODE) scripts/project.mjs locks
 	$(NPM) run build

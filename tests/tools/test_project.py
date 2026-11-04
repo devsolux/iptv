@@ -86,6 +86,19 @@ class ProjectTools(unittest.TestCase):
         self.assertIn('<base-config cleartextTrafficPermitted="false"', release)
         self.assertIn('127.0.0.1', release)
         self.assertIn('<base-config cleartextTrafficPermitted="true"', debug)
+        icons = self.root / 'src-tauri/icons/android'
+        for icon in ['mipmap-anydpi-v26/ic_launcher.xml', 'mipmap-xxxhdpi/ic_launcher_foreground.png']:
+            self.assertEqual((path.parent / 'res' / icon).read_bytes(), (icons / icon).read_bytes())
+
+    def test_android_check_rejects_stock_launcher_icons(self):
+        path = self.manifest()
+        self.assertEqual(self.run_script('android-configure.mjs').returncode, 0)
+        (path.parent / 'res/mipmap-xxxhdpi/ic_launcher.png').write_bytes(b'stock tauri logo')
+        checked = self.run_script('android-configure.mjs', '--check')
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn('Launcher icons', checked.stderr)
+        self.assertEqual(self.run_script('android-configure.mjs').returncode, 0)
+        self.assertEqual(self.run_script('android-configure.mjs', '--check').returncode, 0)
 
     def test_android_preserves_user_managed_policy(self):
         path = self.manifest()

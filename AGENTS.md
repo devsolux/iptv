@@ -16,7 +16,7 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
 | `src-tauri/src/lib.rs` | Tauri commands, app state, lifecycle |
 | `src-tauri/crates/iptv-core/` | M3U/XMLTV parsers, SQLite generations (`db.rs`), sealed key store (`vault.rs`), network policy (`network.rs`), loopback relay (`relay.rs`) and HLS/DASH rewriting (`manifest.rs`), artwork cache (`logos.rs`), iptv-org integration (`iptv_org.rs`) |
 | `src-tauri/plugins/player/` | Android Media3 player plugin (Kotlin) |
-| `scripts/` | `project.mjs` (verify/clean/doctor), `bootstrap.mjs` (dependency upgrades), `android-configure.mjs` |
+| `scripts/` | `project.mjs` (verify/clean/doctor), `bootstrap.mjs` (dependency upgrades), `android-configure.mjs`, `icons.mjs` (rebuilds every icon) |
 | `tests/` | `unit/` (Node), `e2e/` (Playwright), `sql/` and `tools/` (Python `unittest`) |
 | `docs/` | Architecture, security, compatibility, building, verification record |
 
@@ -55,6 +55,7 @@ make test-e2e     # Playwright; run `npx playwright install chromium` once
 make fmt          # Biome --write + cargo fmt
 make verify-release        # exact pins + lockfile gate (metadata only, not a certification)
 make android-init build-android   # generated Android host and APK (needs the Android SDK, JDK 21)
+make icons        # rebuild every icon from src-tauri/icons/source (needs ImageMagick 7)
 ```
 
 Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before committing run
@@ -71,6 +72,9 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
 - Suppress a lint rule only with a `biome-ignore` comment that states the reason.
 - `public/flags/*.svg` are vendored third-party assets: keep them byte-identical. Asset rights are
   recorded in `public/ASSET_PROVENANCE.txt`; the MIT license covers the source code.
+- Icons are outputs of `make icons`: change `src-tauri/icons/source`, never the sized files.
+  `tauri android init` writes the Tauri logo as the launcher on every host, so
+  `android-configure.mjs` installs `src-tauri/icons/android` over it and `--check` fails without it.
 
 ## Invariants that are easy to break
 

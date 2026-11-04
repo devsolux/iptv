@@ -178,6 +178,7 @@ make install                Install committed dependency graphs
 make dev / dev-web          Native desktop app / read-only browser fixture preview
 make android-init           Generate Tauri Android host; add scoped network/TV configuration
 make dev-android            Run Android development session
+make icons                  Rebuild every icon from src-tauri/icons/source (needs ImageMagick)
 make build / build-web      Current-host desktop package / frontend output
 make build-android          Build ARMv7 + ARM64 Android packages (no publishing)
 make build-macos-universal  Build both Mac architectures on macOS

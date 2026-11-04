@@ -191,6 +191,23 @@ The version moves from `1.0.0` to `1.1.0` in every pinned place (`package.json` 
 
 The packaging, signing and asset upload of `v1.1.0` run in the release workflow on GitHub; their result is shown on the release page and in the workflow run, not here.
 
+## Application icon (November 4, 2026)
+
+The red television with unreadable "IPTV" lettering was replaced by a text-free symbol in the application's blue on its navy, generated with Higgsfield (`public/ASSET_PROVENANCE.txt`). `scripts/icons.mjs` builds every size from `src-tauri/icons/source`. Android never showed the old icon: `tauri android init` writes the Tauri logo as the launcher on every host, only the TV banner was replaced, and `android-configure.mjs --check` passed regardless. The script now installs `src-tauri/icons/android` and `--check` fails without it.
+
+| Check | Result |
+| --- | --- |
+| `make check` | Passed: source verification, typecheck, Biome, 21 unit tests, rustfmt, clippy `-D warnings`, 31 Rust tests with 4 ignored. This host resolves `rustc` to Homebrew 1.99.1 ahead of the rustup pin, so these ran on 1.99.1, not 1.99.0 |
+| `make test-sql test-tools` | Passed, 12 and 8 tests (new: `--check` rejects stock launcher icons and accepts them after configuring) |
+| Playwright, 7 specifications | Passed through a temporary configuration on port 1431, because another project held 1420 and `reuseExistingServer` would have tested it. The served `/icon.png` hash matched this checkout. `make test-e2e` itself did not run |
+| `npm run tauri -- android init --ci`, `android-configure.mjs`, `--check` | `--check` failed on the stock logo, passed after configuring |
+| `npm run tauri -- android build --ci --debug --target aarch64 --apk -- --locked` | Passed with rustup's 1.99.0 first on `PATH`; Homebrew's rustc has no Android standard library |
+| `aapt2 dump badging` on that APK | Icon resolves to `res/mipmap-anydpi-v26/ic_launcher.xml` with foreground, background and monochrome layers; banner present; the launcher PNGs compared at mdpi and xxxhdpi show 0 differing pixels against `src-tauri/icons/android` |
+| Android safe zone | 0 foreground pixels outside the 66dp circle at xxxhdpi |
+| Extracted `.icns` and `.ico`, preview header (built-in browser) | 1024 master on Apple's 824 grid; `.ico` holds 16 to 256; header shows the 256 icon at 35 CSS pixels |
+
+Not executed: the icon on any Android, Fire TV or Google TV launcher (no device or emulator image was available, so launcher shapes and themed colours were simulated), a release APK, and a packaged desktop build (`.app`, `.dmg`, installer) in the macOS Dock, Finder or Windows taskbar.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

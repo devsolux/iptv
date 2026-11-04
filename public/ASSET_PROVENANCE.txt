@@ -1,7 +1,8 @@
 IPTV asset provenance
 
-Application icon: user-supplied iptv.zip, assets/icon.png; resized for native bundles.
+Application icon: generated for this project with Higgsfield (GPT Image 2.5), job 7e81c548-199f-4097-8096-46975a681396, November 4, 2026; edge halo removed and trimmed into src-tauri/icons/source/symbol.png. scripts/icons.mjs builds every bundled icon from it.
+Banner wordmark: generated the same way, job 52a16d96-f3ef-41f8-a537-5127e4d08d77; trimmed into src-tauri/icons/source/wordmark.png.
+TV banner: the icon symbol and wordmark composited on the application background.
 Country flags: user-supplied iptv.zip, public/assets/flags; 257 two-letter SVG files copied unchanged.
-TV banner: the supplied icon composited on a solid application background.
 No downloaded fonts, stock artwork or channel logos are bundled.
-Original asset rights were not established by the supplied archives. Confirm redistribution rights before a public release.
+Generated artwork follows the Higgsfield terms of the generating account. Rights in the flags were not established by the supplied archives. Confirm redistribution rights before a public release.

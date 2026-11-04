@@ -1,9 +1,19 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { join, relative } from 'node:path';
 import { root } from './project.mjs';
 
 const base = join(root, 'src-tauri/gen/android/app/src');
 const manifestPath = join(base, 'main/AndroidManifest.xml');
+// `tauri android init` writes its own logo as the launcher icon on every generated host.
+const launcherIcons = join(root, 'src-tauri/icons/android');
 const marker = 'IPTV generated network policy';
 const releasePolicy = `<?xml version="1.0" encoding="utf-8"?>
 <!-- ${marker}. Upstream HTTP is authorized in Rust; Java only uses loopback. -->
@@ -14,6 +24,18 @@ const releasePolicy = `<?xml version="1.0" encoding="utf-8"?>
 const debugPolicy = `<?xml version="1.0" encoding="utf-8"?>
 <!-- ${marker}. DEBUG ONLY: permits the Vite development host. -->
 <network-security-config><base-config cleartextTrafficPermitted="true" /></network-security-config>\n`;
+function launcherIconsMatch() {
+  const icons = readdirSync(launcherIcons, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(launcherIcons, join(entry.parentPath, entry.name)));
+  return icons.every((icon) => {
+    const installed = join(base, 'main/res', icon);
+    return (
+      existsSync(installed) &&
+      readFileSync(installed).equals(readFileSync(join(launcherIcons, icon)))
+    );
+  });
+}
 function put(path, content) {
   if (existsSync(path) && !readFileSync(path, 'utf8').includes(marker))
     throw new Error(`Refusing to replace a user-managed network policy: ${path}`);
@@ -38,8 +60,10 @@ try {
       releasePolicy
     )
       throw new Error('Release network policy differs from the reviewed scoped loopback policy.');
+    if (!launcherIconsMatch())
+      throw new Error('Launcher icons are not installed. Run node scripts/android-configure.mjs.');
     console.log(
-      'Android TV manifest and release loopback policy: OK. Verify the merged release manifest on each toolchain.',
+      'Android TV manifest, launcher icons and release loopback policy: OK. Verify the merged release manifest on each toolchain.',
     );
   } else {
     if (
@@ -91,9 +115,10 @@ try {
       join(root, 'src-tauri/icons/tv-banner.png'),
       join(base, 'main/res/drawable/iptv_banner.png'),
     );
+    cpSync(launcherIcons, join(base, 'main/res'), { recursive: true });
     writeFileSync(manifestPath, manifest);
     console.log(
-      'Configured optional TV features, launcher banner, scoped release networking and debug-only Vite networking.',
+      'Configured optional TV features, launcher icons and banner, scoped release networking and debug-only Vite networking.',
     );
     console.log(
       'Media3 requires a compatible Kotlin/AGP/JDK/SDK toolchain. Review generated Gradle files before building.',
