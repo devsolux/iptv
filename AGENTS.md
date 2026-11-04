@@ -30,9 +30,12 @@ routing and D-pad focus. Media bytes never cross JSON IPC; the UI only receives 
 - Product `IPTV`, identifier `com.devsolux.iptv`, package name `iptv`. Tauri stays on major 2.
 - Do not bump versions, rename the identity or create release tags unless asked.
 
-## Branch policy: `main` only
+## Git workflow: `main` only, one commit per logical change
 
 - `main` is the only branch, locally and on `origin`. Work, commit and push directly on `main`.
+- One commit per logical change. A commit holds one change with the tests and docs that belong to
+  it and passes the checks under Commands on its own. Split unrelated work into separate commits,
+  even when it was done in one session, and never fold a fix for one change into another's commit.
 - Do not create feature branches, worktrees, forks or pull requests, and do not push any other
   branch. If a tool or session starts on another branch or worktree, move the change to `main`
   instead of opening a PR.
