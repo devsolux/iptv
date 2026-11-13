@@ -168,9 +168,14 @@ Every `make` target has an npm/cargo equivalent (see `docs/BUILDING.md`). Before
   live_relay` (run from `src-tauri/`; macOS has no `timeout` command, so do not wrap it).
 - E2E specs run against the `dev:web` preview, not the native app.
 - The Android plugin (`src-tauri/plugins/player/android`) is not covered by `make check`; change it
-  conservatively. The `android` job of `verify.yml` builds a debug aarch64 APK on every push. After `make android-init`, compile it alone with JDK 21:
-  `cd src-tauri/gen/android && ANDROID_HOME=~/Library/Android/sdk ./gradlew --offline
-  :tauri-plugin-iptv-player:compileReleaseKotlin`. Device playback still needs `make build-android`.
+  conservatively. The `android` job of `verify.yml` builds a debug aarch64 APK on every push. The
+  same build runs locally with JDK 21 in `JAVA_HOME`, `ANDROID_HOME`, `NDK_HOME` and the
+  `aarch64-linux-android` Rust target: `make android-init`, then
+  `npm run tauri -- android build --ci --debug --target aarch64 --apk -- --locked`. `init` does not
+  write `gen/android/tauri.settings.gradle`; the app's build script writes it during that Android
+  build, so only afterwards does the plugin compile alone: `cd src-tauri/gen/android && ./gradlew
+  --offline :tauri-plugin-iptv-player:compileReleaseKotlin`. Device playback still needs
+  `make build-android`.
 - Record what actually ran in `docs/VERIFICATION.md`. Never claim device, signing or playback results
   that were not executed, and never fabricate lockfiles.
 

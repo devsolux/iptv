@@ -256,6 +256,17 @@ Three pinned actions were behind their latest release, checked through the GitHu
 
 Not executed: a workflow run with the new pins; the verify workflow starts with the push.
 
+## Android compile instructions (November 13, 2026)
+
+`AGENTS.md` said the player plugin compiles alone after `make android-init`. On a fresh host that fails: `settings.gradle` reads `tauri.settings.gradle`, which `tauri_build::build` writes only in an Android build started by the Tauri CLI (it needs `TAURI_ANDROID_PROJECT_PATH` and the plugins' `DEP_*_ANDROID_LIBRARY_PATH`). The testing notes now list the debug APK build of the `android` job first and the plugin compile after it.
+
+| Check, on a host without `src-tauri/gen/android` | Result |
+| --- | --- |
+| `make android-init` | Passed without prompts; no `tauri.settings.gradle` written |
+| `./gradlew --offline :tauri-plugin-iptv-player:compileReleaseKotlin` right after `init` | Failed: `tauri.settings.gradle` does not exist (run after the first of two fresh `init`s; after the second the file was confirmed absent) |
+| `npm run tauri -- android build --ci --debug --target aarch64 --apk -- --locked` | Passed; wrote `tauri.settings.gradle` and `app/tauri.build.gradle.kts` |
+| The same Gradle compile afterwards | Passed |
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:
