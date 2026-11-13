@@ -4,7 +4,7 @@ Snapshot reviewed on **October 13, 2026**. Product: **IPTV**, identifier **com.d
 
 ## Prerequisites
 
-Use Node 22.12 or newer; `.node-version` selects 26.11.1. npm 10.9 or newer is accepted. `rust-toolchain.toml` selects Rust 1.99.0 with Rustfmt and Clippy. Install platform prerequisites from the [Tauri documentation](https://v2.tauri.app/start/prerequisites/). No project task performs global package installation.
+Use Node 22.12 or newer; `.node-version` selects 26.13.1. npm 10.9 or newer is accepted. `rust-toolchain.toml` selects Rust 1.100.0 with Rustfmt and Clippy. Install platform prerequisites from the [Tauri documentation](https://v2.tauri.app/start/prerequisites/). No project task performs global package installation.
 
 macOS needs Xcode command-line tools; the configured application minimum is macOS 13.3. Universal builds need the `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets. Windows requires the MSVC build tools and WebView2. Linux needs the GTK/WebKitGTK development packages and the appropriate GStreamer codecs for actual media playback. System codec availability must be tested separately from compilation.
 
@@ -14,16 +14,16 @@ Android needs JDK 17 or 21 (the release workflow uses Temurin 21), the SDK platf
 
 | Package | Source-delivery version |
 | --- | --- |
-| Ionic React | 9.0.7 |
-| React / React DOM | 19.3.0 |
-| React Router | 8.4.0, used without Ionic's router adapter |
-| Vite / TypeScript | 8.3.4 / 7.0.2 |
-| Tailwind CSS | 4.3.3 |
-| Tauri Rust / JavaScript API | 2.12.3 |
-| Tauri CLI | 2.12.2 |
+| Ionic React | 9.0.11 |
+| React / React DOM | 19.3.1 |
+| React Router | 8.5.1, used without Ionic's router adapter |
+| Vite / TypeScript | 8.3.8 / 7.0.2 |
+| Tailwind CSS | 4.3.5 |
+| Tauri Rust / JavaScript API | 2.12.5 / 2.12.4 |
+| Tauri CLI | 2.12.4 |
 | React typings (`@types/react`, `@types/react-dom`) | 19.3.0 |
-| TanStack React Virtual / Zustand | 3.14.17 / 5.0.15 |
-| hls.js / dash.js | 1.7.3 / 5.2.1 |
+| TanStack React Virtual / Zustand | 3.14.26 / 5.1.0 |
+| hls.js / dash.js | 1.7.4 / 5.3.0 |
 | Android Media3 | 1.11.1 |
 | AndroidX Activity (player plugin back-press dispatcher) | 1.13.0 |
 

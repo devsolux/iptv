@@ -208,6 +208,43 @@ The red television with unreadable "IPTV" lettering was replaced by a text-free 
 
 Not executed: the icon on any Android, Fire TV or Google TV launcher (no device or emulator image was available, so launcher shapes and themed colours were simulated), a release APK, and a packaged desktop build (`.app`, `.dmg`, installer) in the macOS Dock, Finder or Windows taskbar.
 
+## Dependency upgrade (November 13, 2026)
+
+`make bootstrap` moved every pin to its current stable release and regenerated both lockfiles (`Cargo.lock`: 501 packages resolved for Rust 1.100.0). Environment: macOS arm64, Node 24.22.2, npm 11.19.1, Rust and Cargo 1.100.0 through rustup (the `rust-toolchain.toml` pin; Homebrew's own `cargo` on `PATH` ignores the pin), Python 3.11.18, Playwright 1.65.0 with its Chromium headless shell. The version stays `1.1.0`.
+
+| Area | Moved |
+| --- | --- |
+| npm runtime | `@ionic/react` 9.0.7 → 9.0.11, `@tanstack/react-virtual` 3.14.17 → 3.14.26, `@tauri-apps/api` 2.12.3 → 2.12.4, `dashjs` 5.2.1 → 5.3.0, `hls.js` 1.7.3 → 1.7.4, `react`/`react-dom` 19.3.0 → 19.3.1, `react-router` 8.4.0 → 8.5.1, `zustand` 5.0.15 → 5.1.0 |
+| npm tooling | `@biomejs/biome` 2.5.15 → 2.6.7, `@playwright/test` 1.64.0 → 1.65.0, `tailwindcss`/`@tailwindcss/vite` 4.3.3 → 4.3.5, `@tauri-apps/cli` 2.12.2 → 2.12.4, `@types/node` 26.6.5 → 26.6.6, `@vitejs/plugin-react` 6.1.2 → 6.3.0, `vite` 8.3.4 → 8.3.8 |
+| Crates | `tauri` 2.12.3 → 2.12.5, `tauri-build` 2.7.2 → 2.7.4, `tauri-plugin` 2.7.1 → 2.7.2, `tokio` 1.53.2 → 1.54.1, `rusqlite` 0.40.2 → 0.42.0 (bundled SQLite 3.54.1), `uuid` 1.28.0 → 1.29.2, `flate2` 1.1.10 → 1.1.11 |
+| Toolchains | Rust 1.99.0 → 1.100.0, `.node-version` 26.11.1 → 26.13.1 (the 26 LTS line) |
+| Already current | `mpegts.js`, `zod`, `typescript`, the React typings, the remaining crates, Media3 1.11.1, AndroidX Activity 1.13.0 |
+
+Changelog review and resulting changes:
+
+- Biome 2.6: `biome migrate` changed only the `$schema` URL. Biome 2.6 also formats and lints Markdown and YAML, which would have rewritten every table in `docs/` and both workflows; `biome.json` disables both languages so Biome keeps its 2.5 scope. The rules promoted to the recommended set report nothing in the sources.
+- rusqlite 0.41 checks PRAGMA names against `pragma_list`; the code uses only `journal_mode` and `user_version`. No other listed change touches the APIs in use.
+- dash.js 5.3.0: the numeric error codes in the 5.3.0 typings are identical to 5.2.1, so the mapping in `src/lib/playback.ts` (16, 21 and 33 not fatal) is unchanged; the settings and calls in `usePlayer.ts` are unchanged as well.
+- react-router 8.5 deprecates its view-transition API; the application uses none of it. Ionic 9.0.8 to 9.0.11, zustand 5.1.0 (middleware only), React 19.3.1 (Server Components only), hls.js 1.7.4, TanStack Virtual, Vite and Tailwind are fixes without interface changes for this code.
+- Tauri 2.12.4/2.12.5: fixes only (a mobile plugin late-response panic, an empty-path IPC panic); no capability, CSP, `generate_handler!` or Android template change.
+- Playwright 1.65: the specifications use no page-object classes, CSS imports or aria snapshots, the parts its breaking changes touch.
+- Rust 1.100 adds the Clippy lints `option_zip_none` and `needless_nonzero_get` and Cargo's `unused_dependencies` lint; none fires. tokio 1.54 raises its MSRV to 1.85.
+- WebView floor: dash.js 5.3.0 adds two `??=` operators; the `chrome84` build target lowers them and the built bundle contains no logical assignment operator. Its only `Array.prototype.at` call (content steering) is unchanged from 5.2.1; the other `.at(` calls in the bundle are the application's own `CataloguePager.at`.
+
+| Check | Result |
+| --- | --- |
+| `make check` | Passed, before and after rebasing onto the icon change: source policy, typecheck, Biome, 21 unit tests, rustfmt, Clippy `-D warnings` with no warning, 31 Rust tests (4 live checks ignored) |
+| `make test-sql test-tools` | Passed on the rebased tree: 12 SQLite and 8 build-tool tests |
+| Playwright, 7 specifications | `make test-e2e` passed before the rebase. On the rebased tree another project's dev server held port 1420, so the same specifications ran through a temporary configuration that starts this checkout's server on port 1431; all passed |
+| `make verify-release`, `npm run build:web` | Passed |
+| `npm run tauri -- android init --ci`, `android-configure.mjs`, `--check` | Passed (Tauri CLI 2.12.4 host) |
+| `npm run tauri -- android build --ci --debug --target aarch64 --apk -- --locked` | Passed with JDK 21, NDK 30.0.16138531 and Rust 1.100.0; produced `app-universal-debug.apk` |
+| `./gradlew --offline :tauri-plugin-iptv-player:compileReleaseKotlin` | Passed. It needs `tauri.settings.gradle`, which `tauri android build` or `dev` writes, not `init`. The plugin's only warning is AGP 9's deprecation of the `android { }` accessor in its `build.gradle.kts` |
+| `npm audit` | 5 moderate entries for one advisory: `minimatch` 10.2.6 (GHSA-g3hv-75wg-m249) under `@ionic/react` → `@stencil/react-output-target` → `ts-morph`. The previous lock had the same version; the advisory postdates the October 13 audit. `ts-morph` belongs to Stencil's build-time code generator, which the application never loads. `npm audit fix --force` would downgrade Ionic to 8 and was not applied |
+| `cargo audit` | 0 vulnerabilities; the same 2 upstream warnings as before |
+
+Not executed: the APK on a device or emulator, a release APK, Node 26.13.1 locally, the native desktop build and launch, the `live_relay` checks (`relay.rs` is unchanged) and any playback.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:
@@ -228,6 +265,7 @@ Installation-signed Android packages (no signing secrets are configured, so the 
 
 - Resolved on October 13, 2026: `public/flags` is excluded in `biome.json` and the configuration was migrated to `rules.preset`, so `npm run lint` and `make check` pass; the `web` job of the verification workflow, which had failed on exactly this step since the first push, is green again. `verify.yml` now pins runner images (Ubuntu 24.04, macOS 15, Windows 2025, ahead of the announced `ubuntu-latest` move to Ubuntu 26), caches Cargo builds and keeps Playwright traces of failed specifications. `releases.yml` builds from the committed lockfiles instead of re-resolving dependencies with `make bootstrap` in CI, no longer depends on the uncommitted `docs/dependencies-resolved.json`, uses Temurin JDK 21 for the Android host and signs eleven platform packages.
 - Release run 38437449018 (`v1.0.0`) failed on the macOS `lipo` check and the Android `platforms;android-37` install; fixed on October 13, 2026 (see "Release workflow repair"). Resolved: release run 38444833311 for `v1.0.0` completed green the same day (see "Workflow update").
+- `npm audit` reports the `minimatch` advisory GHSA-g3hv-75wg-m249 through Ionic's Stencil output target (see "Dependency upgrade"); it clears when `ts-morph` accepts a fixed `minimatch` and Ionic picks it up.
 
 ## Release acceptance checklist
 
