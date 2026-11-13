@@ -245,6 +245,17 @@ Changelog review and resulting changes:
 
 Not executed: the APK on a device or emulator, a release APK, Node 26.13.1 locally, the native desktop build and launch, the `live_relay` checks (`relay.rs` is unchanged) and any playback.
 
+## Workflow actions (November 13, 2026)
+
+Three pinned actions were behind their latest release, checked through the GitHub API: `actions/setup-java` v6.1.0 → v6.2.0 (Liberica and Corretto version resolution, Maven mirrors), `Swatinem/rust-cache` v2.9.2 → v2.9.3 (cache cleanup pruning fix) and `sigstore/cosign-installer` v4.1.2 → v4.1.3 (its default Cosign moves to v3.1.4; the release workflow still passes its own `cosign-release`). Each stays pinned to the commit of its release tag, and no input changed. `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0, `actions/upload-artifact` v7.0.2 and `actions/download-artifact` v8.0.2 were current.
+
+| Check | Result |
+| --- | --- |
+| Ruby YAML parse of both workflows | Passed |
+| `make verify-source`, `make test-tools` | Passed |
+
+Not executed: a workflow run with the new pins; the verify workflow starts with the push.
+
 ## Defects found by this verification
 
 Running the real toolchain for the first time exposed defects that are now fixed and covered:

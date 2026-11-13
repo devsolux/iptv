@@ -317,7 +317,7 @@ jobs:
           node-version-file: .node-version
           package-manager-cache: false
       - name: Install Temurin JDK 21 (the LTS accepted by the generated AGP/Gradle host)
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
@@ -513,7 +513,7 @@ jobs:
                   raise SystemExit(f'Unexpected package count in {directory.name}.')
           PY
       - name: Install the resolved latest stable Cosign with installer verification
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: ${{ needs.prepare.outputs.cosign }}
       - name: Sign every asset and its checksum manifest; verify exact workflow identity
@@ -568,7 +568,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.sign.outputs.artifact }}
           path: release-assets
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: ${{ needs.prepare.outputs.cosign }}
       - name: Reverify the complete signed release set before upload
